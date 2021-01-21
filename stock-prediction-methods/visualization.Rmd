@@ -1,0 +1,194 @@
+---
+title: "Untitled"
+author: "Salma Elshahawy"
+date: "12/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r}
+library(xts)
+library(DMwR2)
+library(quantmod)
+library(TTR)
+library(performanceEstimation) 
+library(nnet)
+library(e1071)
+library(kernlab)
+library(earth)
+library(randomForest)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(hrbrthemes)
+```
+
+```{r}
+library(readr)
+dataset <- read_csv('https://raw.githubusercontent.com/salma71/Data_621/master/Project_Proposal/stocks_combined.csv')
+tickers <- read_csv('https://raw.githubusercontent.com/salma71/Data_621/master/Project_Proposal/tickers.csv')
+```
+```{r}
+head(tickers)
+```
+
+
+```{r}
+head(dataset)
+```
+
+```{r}
+dataset$date <- as.Date(anytime::anydate(dataset$date))
+head(dataset)
+```
+
+```{r}
+# library(dygraphs)
+# 
+# # Usual area chart
+# don <- xts( x=dataset$close, order.by=dataset$date)
+# 
+# # Turn it interactive with ggplotly
+# p <- dygraph(don)
+# p
+```
+
+It seems that the closing price tends to increase by time. Let's investigate closing price by ticker.
+
+```{r}
+# Get quantmod
+if (!require("quantmod")) {
+    install.packages("quantmod")
+    library(quantmod)
+}
+
+```
+
+```{r}
+library(timetk)
+library(dplyr)
+# data %>%
+#   dplyr::group_by(ticker) %>%
+#   plot_time_series(date, close, 
+#                    .facet_ncol = 2,
+#                    .facet_scale = 'free',
+#                    .interactive = TRUE)
+```
+
+```{r}
+stocks = tickers$Ticker
+stockEnv <- new.env()
+symbols <- getSymbols(stocks, src='yahoo', env=stockEnv)
+for (stock in ls(stockEnv)){
+    chartSeries(stockEnv[[stock]], theme="white", name=stock,
+        TA="addVo();addBBands();addCCI();addSMA(20, col='blue');
+        addSMA(5, col='red');addSMA(50, col='black')", subset='2014-07-01 /2019-01-09') 
+}
+```
+
+
+
+
+```{r}
+ggplot(dataset, aes(x=date, y=close, col=ticker)) + 
+  geom_line() + 
+  theme_bw()
+
+```
+
+Filter out the tickers to get the ones that has significant trends form mid 2016 to 2019
+
+```{r}
+dataset %>%
+  subset(date > "2016-06-03") %>%
+  filter(close > 150) %>%
+  ggplot(aes(x=date, y=close, col=ticker)) + 
+  geom_line() + 
+  theme_bw()
+```
+
+
+It seems that the major tickers that has significant trends over the years `BA`, `UNH` increasing trends. On the otherhand, `V`, `GS` has a decreasing trend in the closing price. 
+
+I will investigate each one four main tickers. 
+
+```{r}
+stocks <- dataset %>% 
+  filter(ticker %in% c("BA", "UNH","MDFT", "GS", "AAPL"))
+head(stocks)
+```
+
+
+
+```{r}
+library(plotly)
+# cutom colors
+i <- list(line = list(color = '#17BECF'))
+d <- list(line = list(color = '#7F7F7F'))
+
+fig <- stocks %>%
+  filter(ticker == 'AAPL' & date > "2016-06-03") %>%
+  plot_ly(x = ~date, type = 'candlestick',
+          open = ~open, close = ~close,
+          high = ~high, low = ~low,
+          increasing = i, decreasing = d) 
+fig <- fig %>%
+  layout(title = "Apple Stock",
+         yaxis = list(title = 'closing price'),
+         xaxis = list(rangeslider = list(visible = F)))
+
+fig
+```
+
+```{r}
+fig <- stocks %>%
+  filter(ticker == 'UNH' & date > "2016-06-03") %>%
+  plot_ly(x = ~date, type = 'candlestick',
+          open = ~open, close = ~close,
+          high = ~high, low = ~low,
+          increasing = i, decreasing = d) 
+fig <- fig %>%
+  layout(title = "UNH Stock",
+         yaxis = list(title = 'closing price'),
+         xaxis = list(rangeslider = list(visible = F)))
+
+fig
+```
+
+
+```{r}
+getSymbols(Symbols = c("BA", "UNH","MSFT", "GS", "AAPL"), env = stockEnv, src = "yahoo")
+```
+
+```{r}
+temp <- as.xts(data.frame(BA = BA[, "BA.Close"], UNH = UNH[, "UNH.Close"], GS = GS[, "GS.Close"], AAPL = AAPL[, "AAPL.Close"]))
+head(temp)
+```
+
+```{r}
+plot(as.zoo(temp), screens = 1, lty = 1:3, xlab = "Date", ylab = "Price")
+legend("topleft", c("BA", "UNH","GS", "AAPL"), lty = 1:3, cex = 0.5)
+```
+
+```{r}
+stock_return = apply(temp, 1, function(x) {x / temp[1,]}) %>% 
+                                    t %>% as.xts
+
+head(stock_return)
+```
+
+
+```{r}
+plot(as.zoo(stock_return), screens = 1, lty = 1:3, xlab = "Date", ylab = "Return")
+legend("topleft", c("BA", "UNH","GS", "AAPL"), lty = 1:3, cex = 0.5)
+```
+
+
+
