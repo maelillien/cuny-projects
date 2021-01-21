@@ -1,0 +1,12 @@
+name: StateCrudeMortality
+title: StateCrudeMortality
+username:
+account: maelillien
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2922263
+bundleId: 3689958
+url: https://maelillien.shinyapps.io/StateCrudeMortality/
+when: 1601518972.48503
+asMultiple: FALSE
+asStatic: FALSE
