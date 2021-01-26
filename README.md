@@ -6,23 +6,23 @@ R, Python, Jupyter notebooks, Apps deployed using Dash, RShiny
 
 #### Network Analysis
 
-graph-database
+[graph-database](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/graph-database/data620assignment3.ipynb) - An exploration of a network of bitcoin users with the help of Neo4J Graph Database and NetworkX
 
-nyc-location-network
+[nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API
 
-topic-modeling-network-analysis
+[topic-modeling-network-analysis](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/topic-modeling-network-analysis/data620project_final.ipynb) - An un-supervised topic modeling exploration of the '' corpus using LDA and Mallet.
 
-imdb-movie-network
+[imdb-movie-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/imdb-movie-network/data620project02.ipynb) - An exploration of a large 2-mode (movie-actor) network using the Kaggle IMDB dataset. 
 
-simple-2mode-network
+simple-2mode-network (remove?)
 
 #### Simulations
 
-sharpe-ratio-optimization
+[sharpe-ratio-optimization](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/sharpe-ratio-optimization/data604finalproject.ipynb) -
 
 #### Natural Language Processing
   
-[nlp-basic](https://github.com/maelillien/cuny-projects/blob/main/nlp-basic/data620assignment5.ipynb) - 
+[nlp-basic](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nlp-basic/data620assignment5.ipynb) - Simple NLP using NLTK.
   
 topic-modeling-network-analysis
   
@@ -40,6 +40,8 @@ spam-email-classifier
 
 stock-prediction-methods
 
+crime-investigation
+
 #### Apps & Dashboards
 
 [us-mortality-app](https://maelillien.shinyapps.io/StateCrudeMortality/)
@@ -50,9 +52,9 @@ nyc-treehealth-app
 
 #### Python
 
-blockchain-python
+blockchain-python - A simple implementation of a blockchain in Python
 
-nosql-db
+nosql-db - A simple implementation of a NoSQL database in Python
 
 
 
