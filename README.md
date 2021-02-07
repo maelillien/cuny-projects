@@ -17,6 +17,8 @@ R, Python, Jupyter notebooks, Apps deployed using Dash, RShiny
 
 [stock-prediction-methods](https://rpubs.com/maelillien/data621finalproject) - An exploration of various machine learning methods for stock prediction using logistic regression, panel regression and autoregressive models. 
 
+[spam-email-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/spam-email-classifier/data620assignment06.ipynb) - Spam email classification comparing Naive Bayes, SVM, Random Forest and Adaptive Boosting models.
+
 [crime-investigation](https://rpubs.com/maelillien/data607finalproject) - A socio-economic investigation into crime in NYC combining NYPD Arrests data and unemployment statistics from the Department of Labor.
 
 [nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API
@@ -34,8 +36,6 @@ R, Python, Jupyter notebooks, Apps deployed using Dash, RShiny
 [name-gender-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/name-gender-classifier/data620project03.ipynb) - Combining NLP and classification to identify the gender of names.
 
 [migration-gender-inference](https://rpubs.com/maelillien/data606finalproject) - Hypothesis testing the change in gender proportion of migrants from 1990 to 2019
-
-spam-email-classifier - Verify. 607? 608?
 
 [basic-ml-python](https://github.com/maelillien/cuny-projects/blob/main/basic-ml-python/basic-ml.py) - Simple ML study of the classic iris and boston datasets using sklearn.
 
