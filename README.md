@@ -41,7 +41,7 @@ R, Python, Jupyter notebooks, Apps deployed using Dash, RShiny
 
 #### Simulations
 
-[sharpe-ratio-optimization](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/sharpe-ratio-optimization/data604finalproject.ipynb) -
+[sharpe-ratio-optimization](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/sharpe-ratio-optimization/data604finalproject.ipynb) - Monte Carlo simulation of efficient portfolios using Modern Portfolio Theory. 
 
 #### Python
 
