@@ -46,9 +46,9 @@ spam-email-classifier - Verify. 607?
 
 [us-mortality-app](https://maelillien.shinyapps.io/StateCrudeMortality/) - An RShiny app exploring the crude mortality of US states by health conditions.
 
-nyc-treehealth-app
+[nyc-treehealth-app](https://mi-tree-health.herokuapp.com/) - A Dash app evaluating the health of tree species using data from the NYC street tree census.
 
-[crypto-screener-app](https://mi-cryptoscreener.herokuapp.com/) - A dash app interface to the coinbasepro API, with interactive graphs and a screener table.
+[crypto-screener-app](https://mi-cryptoscreener.herokuapp.com/) - A Dash app interface to the coinbasepro API, with interactive graphs and a screener table.
 
 #### Python
 
