@@ -33,6 +33,8 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [simple-2mode-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/simple-2mode-network/data620assignment4.ipynb) - Analysis of a bipartite network with unipartite representations and identificaiton of cliques.
 
+[soccer-poisson-regression](https://rpubs.com/maelillien/poisson-soccer) - Analysis of the 2018-2019 EPL season using Poisson regression for score predictions.
+
 [nlp-basic](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nlp-basic/data620assignment5.ipynb) - Simple NLP using NLTK.
   
 [name-gender-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/name-gender-classifier/data620project03.ipynb) - Combining NLP and classification to identify the gender of names.
