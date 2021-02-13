@@ -9,9 +9,9 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [nyc-treehealth-app](https://mi-tree-health.herokuapp.com/) - A Dash app evaluating the health of tree species using data from the NYC street tree census.
 
-[us-mortality-app](https://maelillien.shinyapps.io/StateCrudeMortality/) - An RShiny app exploring the crude mortality of US states by health conditions.
+[us-mortality-app](https://maelillien.shinyapps.io/StateCrudeMortality/) - An RShiny app exploring the crude mortality in US states by health conditions.
 
-[us-company-distribution](https://rpubs.com/maelillien/data608hw1) - A simple exploration of companies in NY state with ggplot minimalist visualizations mindful of design principles.
+[us-company-distribution](https://rpubs.com/maelillien/data608hw1) - An exploration of companies in NY state with ggplot minimalist visualizations mindful of design principles.
 
 #### Machine Learning, Network Analysis, Natural Language Processing
 
@@ -21,13 +21,13 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [crime-investigation](https://rpubs.com/maelillien/data607finalproject) - A socio-economic investigation into crime in NYC combining NYPD Arrests data and unemployment statistics from the Department of Labor.
 
-[nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API
+[nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API.
 
 [topic-modeling-network-analysis](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/topic-modeling-network-analysis/data620project_final.ipynb) - An un-supervised LDA based topic modeling exploration of the Reuters news corpus with network analysis representations.
 
 [imdb-movie-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/imdb-movie-network/data620project02.ipynb) - An exploration of a large 2-mode (movie-actor) network using the Kaggle IMDB dataset. 
 
-[graph-database](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/graph-database/data620assignment3.ipynb) - An exploration of a network of bitcoin users with the help of Neo4J Graph Database and NetworkX
+[graph-database](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/graph-database/data620assignment3.ipynb) - An exploration of a network of bitcoin users with the Neo4J Graph Database and NetworkX.
 
 [simple-2mode-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/simple-2mode-network/data620assignment4.ipynb) - Analysis of a bipartite network with unipartite representations and identificaiton of cliques.
 
@@ -35,7 +35,7 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
   
 [name-gender-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/name-gender-classifier/data620project03.ipynb) - Combining NLP and classification to identify the gender of names.
 
-[migration-gender-inference](https://rpubs.com/maelillien/data606finalproject) - Hypothesis testing the change in gender proportion of migrants from 1990 to 2019
+[migration-gender-inference](https://rpubs.com/maelillien/data606finalproject) - Hypothesis testing the change in gender proportion of migrants from 1990 to 2019.
 
 [basic-ml-python](https://github.com/maelillien/cuny-projects/blob/main/basic-ml-python/basic-ml.py) - Simple ML study of the classic iris and boston datasets using sklearn.
 
@@ -45,9 +45,9 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 #### Python
 
-[blockchain-python](https://github.com/maelillien/cuny-projects/blob/main/blockchain-python/blockchain_python.py) - An implementation of a blockchain in Python
+[blockchain-python](https://github.com/maelillien/cuny-projects/blob/main/blockchain-python/blockchain_python.py) - An implementation of a blockchain in Python.
 
-[nosql-db](https://github.com/maelillien/cuny-projects/blob/main/nosql-db/no-sql-db.py) - An implementation of a NoSQL database in Python
+[nosql-db](https://github.com/maelillien/cuny-projects/blob/main/nosql-db/no-sql-db.py) - An implementation of a NoSQL database in Python.
 
 
 
