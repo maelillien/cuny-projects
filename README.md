@@ -13,6 +13,8 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [us-company-distribution](https://rpubs.com/maelillien/data608hw1) - An exploration of companies in NY state with ggplot minimalist visualizations mindful of design principles.
 
+[most-valued-datascience-skills](https://rpubs.com/dhairavc/541217) - A comparison of the most valued data science skills web-scraped from LinkedIn and Indeed.
+
 #### Machine Learning, Network Analysis, Natural Language Processing
 
 [stock-prediction-methods](https://rpubs.com/maelillien/data621finalproject) - An exploration of various machine learning methods for stock prediction using logistic regression, panel regression and autoregressive models. 
