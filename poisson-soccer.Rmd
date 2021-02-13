@@ -1,0 +1,184 @@
+---
+title: "Poisson Regression - Soccer Predictions"
+author: "Mael Illien"
+date: "12/09/2020"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+    highlight: pygments
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(RCurl)
+library(httr)
+library(kableExtra)
+
+showtable <- function(data, title) {
+  kable(data, caption = title) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+}
+```
+
+# Poisson Regression
+
+Sports generate multitudes of data. Sports data analysis is useful not only for coaches trying to understand the relative strength or weakness of teams, but also for avid betters around the world looking for an edge. Given the popularity of fantasy sports and betting sites, regression might provide a valuable tool in predicting outcomes for decison making.
+
+Depending on the sport in question, there are a variety of events that bets could be placed on. These events could be simple (team A will beat team B), or more granular (the score between team A and team B will be 3-0) or even more refined (there will be 3 corner kicks in a game, there will exactly 1 red card, at least 2 goals will be score by any team in the first half of a game). The refined examples can get pretty specific and domain knowledge might go a long way in creating and selecting appropriate predictors. 
+
+As mentioned above, one of the simplest bets to place is whether or not a team will win. Winning is determined by scoring more points than the other team. Goals or baskets scored are effectively a count.  This suggests that we should work with a count data model such as Poisson. The Poisson distribution describes the probability of a number of events within a specific time period. It is described by a unique parameter, $\lambda$ which represents the rate (in our case, average number of goals) of occurence. 
+
+## Data
+
+The data is obtained from https://www.football-data.org/ which contains a wealth of information about football competitions, matches and players. We make a request to the API and parse the content. We iterate through the matches of the 2018-2019 EPL season to build a data frame representing every game, consisting of home and away teams, and the number of goals scored by the respective teams.
+
+```{r echo=FALSE}
+matches = GET("https://api.football-data.org/v2/competitions/PL/matches?season=2018",
+              add_headers("X-Auth-Token"="4359d0669bcf4327995aca681e9cf9e2")
+          )
+          
+m <- content(matches, "parse")
+epl_data <- data.frame()
+
+for (match in m$matches) {
+  home <- match$homeTeam$name
+  away <- match$awayTeam$name
+  homeGoals <- match$score$fullTime$homeTeam
+  awayGoals <- match$score$fullTime$awayTeam
+  
+  epl_data <- rbind(epl_data, data.frame(home=home, away=away, homegoals=homeGoals, awaygoals=awayGoals))
+}
+
+showtable(head(epl_data,20),"")
+```
+
+The mean of home and away goals for the overall season are extracted and used as the parameter of the Poisson distribution.  We plot the count of goals against the distribution to evaluate the fit and see that the Poisson is appropriate. An alternative distribution to consider could be the neagative binomial.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+lambdas <- data.frame(avg_home_goals = mean(epl_data$homegoals), avg_away_goals = mean(epl_data$awaygoals))
+lambdas
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+bind_rows(list(
+  epl_data %>% group_by(homegoals) %>% summarize(actual=n()/nrow(.)) %>% 
+    mutate(pred=dpois(0:max(max(epl_data$homegoals),max(epl_data$awaygoals)), 
+                      mean(epl_data$homegoals)), type="home") %>% rename(goals=homegoals),
+  epl_data %>% group_by(awaygoals) %>% summarize(actual=n()/nrow(.)) %>% 
+    mutate(pred=dpois(0:max(max(epl_data$homegoals),max(epl_data$awaygoals)),
+                      mean(epl_data$awaygoals)), type="away") %>% rename(goals=awaygoals))) %>%
+  mutate(type=factor(type, levels=c("home", "away"), labels = c("Home", "Away"))) %>%
+  ggplot(aes(x=as.factor(goals))) + 
+  geom_bar(aes(y=actual,fill=type),stat="identity",position="dodge") +
+  geom_line(aes(group=type, y = pred,color=type),size=1.25)  +
+  #  scale_fill_manual(values=c("#FFA07A", "#20B2AA"))  +
+  scale_fill_manual(values=c("royalblue4", "red3"), 
+                     name = "Actual",
+                     guide = guide_legend(override.aes = list(linetype = c(0,1)))) +
+  scale_color_manual(values=c("royalblue4", "red3"),
+                     name="Poisson")  +
+  ggtitle("Number of Goals per Match (EPL 2018/19 Season)")  + xlab("Goals per Match") + ylab("Proportion of Matches")
+```
+
+
+With this information, can now estimate the probability of events like scoring at least two goals at home or the probability of a draw.
+
+```{r}
+1 - ppois(1, lambda=lambdas$avg_home_goals, lower=TRUE)
+```
+
+```{r}
+g <- seq(0,max(epl_data$homegoals, epl_data$awaygoals))
+home_draw <- dpois(g, lambdas$avg_home_goals)
+away_draw <- dpois(g, lambdas$avg_away_goals)
+p_draw <- sum(home_draw*away_draw)
+p_draw
+```
+
+## Modeling
+
+The data is restructured for modeling, with `goals` as the target variable. Poisson belongs to the GLM family of regression and is linked to the response variables via a log link. 
+
+```{r}
+model_data <- rbind(data.frame(team=epl_data$home, opponent=epl_data$away, home=1, goals=epl_data$homegoals),
+  data.frame(team=epl_data$away, opponent=epl_data$home, home=0, goals=epl_data$awaygoals))
+
+showtable(head(model_data,20),"")
+```
+
+```{r}
+pois_model <- glm(goals ~ home + team + opponent, family=poisson(link=log), data=model_data)
+summary(pois_model)
+```
+
+```{r}
+modelresults <- data.frame(summary(pois_model)[12])
+colnames(modelresults) <- c('estimate','std_err','z_val','p_val')
+
+showtable(modelresults,"")
+```
+
+
+From the summary of this model, we can draw some interesting conclusions: 
+
+* The variable `home` is significant with a coefficient of 0.224823, which means that a team playing at home are more likely to score goals.
+* Teams Hudderfield, Newcastle, Fulhan, Cardiff and Brighton are all less likely to score goals
+  + teamHuddersfield Town AFC is also very significant with the greatest negative coefficient indicating that it is the least likley team to score, which should not be suprising given that Huddersfield finished last in the 18/19 season.
+* Teams were less likely to score when the opponent was Manchester City FC (winner) and Liverpool (runner up) but more likely to score when playing Fulham, Bournemouth and Huddersfield.
+
+These findings might be obvious to someone with knowledge of the EPL and of that season in particular. However, we can turn to prediction for further insights.
+
+
+## Predictions
+
+We use our model to look at two teams, Liverpool (at home) vs Chelsea, and the number of goals scored predicted for each team. 
+
+```{r}
+chelsea <- round(predict(pois_model, 
+        data.frame(home=0, team="Chelsea FC", 
+                   opponent="Liverpool FC"), type="response"),0)
+
+liverpool <- round(predict(pois_model, 
+        data.frame(home=1, team="Liverpool FC", 
+                   opponent="Chelsea FC"), type="response"),0)
+
+print(paste0('Liverpool FC (home) ',liverpool,' - ',chelsea,' Chelsea FC (away)'))
+```
+
+We can pull out all the games played by Liverpool FC and whether goals were scored during the home games and or away games. 
+
+```{r echo=FALSE}
+showtable(epl_data %>% filter(home=="Liverpool FC"),"")
+```
+
+The data can be manipulated further to compare the actual scores vs the predicted score. This is shown for Liverpool FC, a team that consistently performs very well and Huddersfield Town AFC, a team that finished at the bottom of the table.
+
+```{r echo=FALSE}
+preds <- epl_data %>% filter(home=="Liverpool FC") %>% 
+  mutate(predhomegoals=round(predict(pois_model, data.frame(home=1, team="Liverpool FC", opponent=away), type="response"),0),
+         predawaygoals=round(predict(pois_model, data.frame(home=0, team=away, opponent="Liverpool FC"), type="response"),0)) %>%
+  mutate(actualscore=paste0(homegoals,'-',awaygoals), predscore=paste0(predhomegoals,'-',predawaygoals)) %>% select(-c(homegoals:predawaygoals))
+showtable(preds,"")
+```
+
+```{r echo=FALSE}
+team <- "Huddersfield Town AFC"
+preds <- epl_data %>% filter(home==team) %>% 
+  mutate(predhomegoals=round(predict(pois_model, data.frame(home=1, team=team, opponent=away), type="response"),0),
+         predawaygoals=round(predict(pois_model, data.frame(home=0, team=away, opponent=team), type="response"),0)) %>%
+  mutate(actualscore=paste0(homegoals,'-',awaygoals), predscore=paste0(predhomegoals,'-',predawaygoals)) %>% select(-c(homegoals:predawaygoals))
+showtable(preds,"")
+```
+
+## Conclusion
+
+This example showed how to use Poisson regression and apply it to sports data to draw some statistical insights and predict game scores. While the insights may be satisfying, there are many variable factors in sports leagues such as injuries or transfers that can have significant impact a team's performance. Such complexity is not captured in this model, interesting results from this simple model can be foundational for more robust score prediction exercises.
+
+
+
