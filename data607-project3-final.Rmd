@@ -1,0 +1,390 @@
+---
+title: "Most Valued Data Science Skills"
+author: "Mael Illien, Dhairav Chhatbar, Charlie Rosemond, Matt Mayor, Bryan Persaud"
+date: "10/14/2019"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Motivation
+William Edwards Deming is known for the quote “In God we trust, all others must bring data.” It is clear that data-driven decision making is superior and is in these times a requirement to maintain a competitive edge. Every industry now treats their data as an asset to get insights from and is a foundation in the decision making process. Turning data into insights not only requires appropriate systems in place, but also requires the appropriate subject matter experts to interpret and discover what the data has to say.  
+
+Data Science is the art of analyzing data to gain knowledge in order to make business decisions. Data Science at its core is a union of mathematics, statistics, and programming disciplines. Data Scientists need to possess various skills such as data/quantitative analysis, R/Python programming, Machine Learning, Data Visualization, etc. Some skills may be more important than others depending on the task at hand.  
+
+As future Data Scientists we seek to understand what are some of the most important skills to possess. We will gather this consensus by conducting exploratory analysis on what skills employers are looking for through job listings on LinkedIn and Indeed.   
+
+# Approach
+Given the prompt “Which are the most valued data science skills?”, our team has brainstormed various sources of information that describe the knowledge or skills sought after by current or prospective employers of data scientists. Job listings represent a logical starting point, and we have chosen to focus on LinkedIn and Indeed, two of the most popular online homes for this information.
+
+Our general approach consists of:  
+1. Scraping job listings from LinkedIn and Indeed  
+2. Applying a whitelist of data science-relevant words, paired or non-paired, to the scraped text  
+3. Storing the resulting sets in a SQL database  
+4. Performing an exploratory analysis   
+
+For scraping, we use R's rvest package and focus on results from searches for "data science" in the New York City area. Our whitelist is informed by a review of several online journalistic sources and includes tools, skills, and knowledge bases like "Python", "Web Scraping", and "Machine Learning", among many others. We use MySQL for database storage. And our analysis relies on R's tidyverse collection of packages.
+
+Our workflow moves from preparation to scraping and pre-processing to storage to analysis and visualization. Each stage is described below in more detail.
+
+# Whitelist
+The aforementioned whitelist of 83 data science-related words or terms is compiled from several articles focused on valued and demanded skills for data scientists. The articles are cited below, alphabetized by author's last name.
+
+Dataquest.com (2019). "How to write a great data science resume". Dataquest Career Guide. Accessed 10/14/19 from https://www.dataquest.io/blog/how-data-science-resume-cv/
+
+Doyle, A. (2019). "Important job skills for data scientists". The balance careers. Accessed 10/14/19 from https://www.thebalancecareers.com/list-of-data-scientist-skills-2062381
+
+Gerencer, T. (2019). "Data scientist resume: Sample and complete guide [20+ Examples]". Zety. Accessed 10/14/19 from https://zety.com/blog/data-scientist-resume-example
+
+Hale, J. (2018). "The most in demand skills for data scientists". Towards Data Science. Accessed 10/14/2019 from https://towardsdatascience.com/the-most-in-demand-skills-for-data-scientists-4a4a8db896db
+
+Indeed.com (2019). "Data scientist resume samples". Indeed Career Guide. Accessed 10/14/19 from https://www.indeed.com/career-advice/resume-samples/information-technology-resumes/data-scientist
+
+```{r}
+wlist <- read.csv('https://raw.githubusercontent.com/dhairavc/data607-project3/master/whitelist.csv')
+wlist
+```
+
+# Required Libraries
+
+```{r, message=FALSE}
+library(rvest)
+library(tidyverse)
+library(wordcloud)
+library(ggrepel)
+library(png)
+library(RCurl)
+library(grid)
+library(RMySQL)
+```
+
+# Data Pre-Processing and Scraping Functions
+Data pre-processing uses five user-defined functions to extract words from job listings, and specifically, their skills sections; aggregate and sort the extracted words; apply the whitelist to filter out irrelevant words; and apply the prior three functions to each of LinkedIn and Indeed. Each function is described in more detail below.
+
+## extract_words
+The extract_words function will take a link to a particular job post and the selector which contains the list of interest and return a dataframe of words in that job post's skills section and the number of occurrences of each particular words.
+
+```{r}
+extract_words <- function(link_to_job_page, selector) {
+  # download the html and turn it into an XML file with read_html()
+  job_page <- read_html(link_to_job_page)
+  # extract specific nodes with html_nodes() using css selector
+  skills_tag <- html_nodes(job_page, selector)
+  # extract content from nodes
+  skills_text <- html_text(skills_tag)
+  # remove punctuation
+  skills_text <- gsub('[[:punct:]]', '', skills_text)
+  # split sentences into individual words
+  words <- unlist(strsplit(skills_text, " "))
+  words <- tolower(words)
+  # count the number of occurrences of each word
+  wordcount <- table(words)
+  wordcount_df <- as.data.frame(wordcount)
+  return(wordcount_df)
+}
+```
+
+## get_word_counts
+Given a list of links to job pages, call the extract_words function to get the total word counts from the chosen selector from each each link, aggregate them and return the counts in decreasing order in a data frame.
+
+```{r}
+get_word_counts <- function(links_to_jobs, selector) {
+  
+  # initialize a list 
+  counts <- list()
+  
+  for (i in 1:length(links_to_jobs)) {
+    df <- extract_words(links_to_jobs[i], selector)
+    counts[[i]] <- df
+  }
+  # combine into a dataframe
+  skill_count <- do.call(rbind, counts)
+  
+  # sum multiple occurences of the same word
+  total_skill_count <- skill_count %>% 
+    group_by(words) %>% 
+    summarize(occurrences = sum(Freq)) %>% 
+    arrange(desc(occurrences))
+  return(total_skill_count)
+}
+```
+
+## get_DS_skills
+A function that applies the whitelist of data science key words and skills to our count of word occurences to filter our irrelevant words.
+
+```{r}
+get_DS_skills <- function(word_count) {
+  # apply whitelist
+  total_skill_count <- word_count %>% filter(words %in% wlist$Whitelist)
+  return(total_skill_count)
+}
+```
+
+## Extracting Data Science Skills from LinkedIn
+Many results are returned when searching for data scientist jobs, each containing a `a.result-card__full-card-link` element as shown below. These elements contain `href` attributes which contain the links to the actual job pages. We loop through the search results to extract a list of links to individual job posts.
+
+```{r fig.width=10, fig.height=5, echo=FALSE}
+pngurl <- "https://raw.githubusercontent.com/maelillien/data607-project3/master/linkedin_element.png"
+img <- readPNG(getURLContent(pngurl))
+grid.raster(img)
+```
+
+The skills of interest are found in list form between `<ul>` and `<li>` tags and the Selector Gadget tool produces the selector `.description__text--rich li` which we use to extract the content contained between each `<li>` tag.
+
+```{r fig.width=5, fig.height=5,echo=FALSE}
+pngurl <- "https://raw.githubusercontent.com/maelillien/data607-project3/master/linkedin_skills.png"
+img <- readPNG(getURLContent(pngurl))
+grid.raster(img)
+```
+
+```{r}
+linkedin_top_skills <- function() {
+  # save the url which contains the search results
+  root_url <- "https://www.linkedin.com/jobs/search/?keywords=data%20scientist&start="
+  
+  # for each job, extract the href attribute from each job using the css selector
+  # create a list of links by extracting the href attribute from the nodes
+   links_to_jobs <- vector()
+  for (x in 0:39) {
+    paged_url <- paste(root_url, 25*x, collapse = NULL, sep = "")
+  
+    search_results <- read_html(paged_url)
+    temp_paths_to_jobs <- search_results %>%
+     html_nodes("a.result-card__full-card-link") %>%
+     html_attr("href")
+    
+    links_to_jobs <- c(links_to_jobs, temp_paths_to_jobs)
+  }
+  
+  # for Linkedin job posts, skills are located in <li> tags with the following selector
+  selector <- ".description__text--rich li"
+  # get word counts from the list of links to job posts
+  word_count <- get_word_counts(links_to_jobs, selector)
+  # uncomment this to see the results pre-whitelist
+  #print(word_count)
+  # get data science related skills from the above word count
+  skill_count <- get_DS_skills(word_count)
+  return(skill_count)
+}
+```
+
+
+## Extracting Data Science Skills from Indeed
+In the case of sourcing data from Indeed, the links are actually contained in the `href` attributes of children of `<div class="title">` elements. 
+
+```{r fig.width=10, fig.height=5,echo=FALSE}
+pngurl <- "https://raw.githubusercontent.com/maelillien/data607-project3/master/indeed_element.png"
+img <- readPNG(getURLContent(pngurl))
+grid.raster(img)
+```
+
+As before, the skills of interest are found in list form between `<ul>` and `<li>` tags.
+
+```{r fig.width=5, fig.height=5,echo=FALSE}
+library(png)
+library(RCurl)
+library(grid)
+
+pngurl <- "https://raw.githubusercontent.com/maelillien/data607-project3/master/indeed_skills.png"
+img <- readPNG(getURLContent(pngurl))
+grid.raster(img)
+```
+
+```{r}
+indeed_top_skills <- function() {
+  # save the url which contains the search results
+  domain <- "https://www.indeed.com"
+  root_url <- "https://www.indeed.com/jobs?q=data+science&l=New+York+City%2C+NY&start="
+  paths_to_jobs <- vector()
+  # for each job, extract the href attribute from each job using the css selector
+  # create a list of links by extracting the href attribute from the nodes
+  
+  for (x in 0:50) {
+   paged_url <- paste(root_url, 10*x, collapse = NULL, sep = "")
+   
+   search_results <- read_html(paged_url)
+   temp_paths_to_jobs <- search_results %>%
+     html_nodes(".title") %>%
+     html_children() %>%
+     html_attr("href")
+   
+   paths_to_jobs <- c(paths_to_jobs, temp_paths_to_jobs)
+  }
+  
+  # contatenate paths with the domain name to create valid links
+  links_to_jobs <- str_c(domain, paths_to_jobs)
+  # for Indeed job posts, skills are located in <li> tags so the selector is simple
+  selector <- "li"
+  # get word counts from the list of links to job posts
+  word_count <- get_word_counts(links_to_jobs, selector)
+  # uncomment this to see the results pre-whitelist
+  #print(word_count)
+  # get data science related skills from the above word count
+  skill_count <- get_DS_skills(word_count)
+  return(skill_count)
+}
+```
+
+
+# Web Scraping and Data Export
+Call the functions defined above and scrape the data from the two sources and write the dataframes to a .csv file.
+
+```{r message=FALSE, warning=FALSE}
+linkedin <- linkedin_top_skills()
+write.csv(linkedin, file = "linkedin.csv", row.names = FALSE, col.names = TRUE, sep = "", quote = FALSE)
+```
+```{r message=FALSE, warning=FALSE}
+indeed <- indeed_top_skills()
+write.csv(indeed, file = "indeed.csv", row.names = FALSE, col.names = TRUE, sep = "", quote = FALSE)
+```
+
+# SQL Storage
+Take observations and occurrences of skills for both job boards, normalize and store in database for future reporting
+```{r SQL, message=FALSE, include=FALSE}
+#Run query "SET GLOBAL local_infile = 1;" in SQL prior for dbWriteTable function to work. By default local_infile is set to 0.
+
+drv2 <- dbDriver("MySQL")
+con2 <- dbConnect(drv2, username="dsc", password="datascience", dbname ="dsskills", host="localhost")
+
+```
+
+## Create and Populate SQL Tables
+Create database and 3 tables:  
+1. Board_Name: holds the name of the job boards  
+2. Skill_Name: table to store unique set of observed skills  
+3. Board_Summary: table to store occurrences of skills in relation to the job boards  
+```{r results='hide'}
+
+#Create database
+dbSendQuery(con2, "DROP DATABASE IF EXISTS dsskills;")
+dbSendQuery(con2, "CREATE DATABASE dsskills;")
+dbSendQuery(con2, "use dsskills;")  
+
+#Create and populate a table to store job boards
+BoardID <- c(1,2)
+Board_Name <- c("Indeed", "LinkedIn") 
+JobBoard <- data.frame(BoardID, Board_Name)         
+dbWriteTable(con2, name="JobBoard", value = JobBoard, row.names=FALSE)
+dbSendQuery(con2, "ALTER TABLE jobboard ADD PRIMARY KEY (BoardID);")
+
+
+#Create and populate table to store unique set of observed skills
+allwords <- rbind(droplevels.data.frame(indeed), droplevels.data.frame(linkedin))
+allwords2 <- allwords %>% group_by(words) %>% summarise(Occurrences = sum(occurrences))
+uniquewords <- data.frame(noquote(as.character(allwords2$words)))
+colnames(uniquewords) <- c("Word")
+dbWriteTable(con2, name = "Skill_Name", value = uniquewords )
+dbSendQuery(con2, "ALTER TABLE Skill_Name CHANGE row_names WordID INT;")
+dbSendQuery(con2, "ALTER TABLE Skill_Name ADD PRIMARY KEY (WordID);")
+dbSendQuery(con2, "DELETE FROM Skill_Name WHERE WordID IS NULL;")
+dbSendQuery(con2, "ALTER TABLE Skill_Name MODIFY COLUMN WordID DOUBLE NOT NULL;")
+
+
+#Create and populate table to store occurrences of skills in relation to the job boards
+linkedin_summary <- cbind(Board_Name = JobBoard$Board_Name[2], droplevels.data.frame(linkedin))
+indeed_summary <- cbind(Board_Name = JobBoard$Board_Name[1], droplevels.data.frame(indeed))
+board_summary <- rbind(indeed_summary, linkedin_summary)
+board_summary_INT <- data.frame(BoardID = as.numeric(board_summary$Board_Name), SkillID = as.numeric(board_summary$words), Occurences = board_summary$occurrences)
+dbWriteTable(con2, name = "Board_summary", value = board_summary_INT)
+dbSendQuery(con2, "ALTER TABLE Board_Summary CHANGE row_names MatchID INT;")
+dbSendQuery(con2, "ALTER TABLE Board_Summary ADD PRIMARY KEY (MatchID);")
+dbSendQuery(con2, "ALTER TABLE Board_Summary ADD FOREIGN KEY (BoardID) REFERENCES JobBoard (BoardID);")
+dbSendQuery(con2, "ALTER TABLE Board_Summary ADD FOREIGN KEY (SkillID) REFERENCES Skill_Name (WordID);")
+
+dbClearResult(dbListResults(con2)[[1]])
+```
+
+## Display SQL Tables
+```{r DB Query}
+
+dbGetQuery(con2, "SELECT * FROM JobBoard;")
+
+head(dbGetQuery(con2, "SELECT * FROM Skill_Name;"), 10)
+
+head(dbGetQuery(con2, "SELECT * FROM Board_Summary;"))
+
+head(dbGetQuery(con2, "SELECT JobBoard.Board_Name, Skill_Name.Word, Board_Summary.Occurences FROM Board_Summary
+                       JOIN Skill_Name
+                       ON Board_Summary.SkillID = Skill_Name.WordID
+                       JOIN JobBoard
+                       ON JobBoard.BoardID = Board_Summary.BoardID
+                       ORDER BY Board_Summary.Occurences DESC;")
+, 10)
+
+```
+
+# Analysis & Visualization
+
+## Box Plots
+```{r boxplots, eval=TRUE, warning=FALSE}
+indeed$site <- "Indeed"
+linkedin$site <- "LinkedIn"
+append <- bind_rows(indeed, linkedin)
+is_outlier <- function(x) {
+  return(x < quantile(x, 0.25) - 1.5 * IQR(x) | x > quantile(x, 0.75) + 1.5 * IQR(x))
+}
+append %>% group_by(site) %>% mutate(outlier=ifelse(is_outlier(occurrences), as.character(words), "")) %>%
+ggplot(., aes(x=site, y=occurrences)) +
+  geom_boxplot() +
+  labs(title="Distribution of occurrences by site", x="Site", y="Occurrences") +
+  coord_flip() +
+  geom_label_repel(aes(label = outlier),
+                  box.padding   = 0.4, 
+                  point.padding = 0.3,
+                  segment.color = 'grey50')
+```
+
+
+## Word Clouds
+```{r wordcloud1, eval=TRUE, message=FALSE, warning=FALSE}
+library(wordcloud)
+###Linkedin
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Most common words on LinkedIn")
+wordcloud(words=linkedin$words, freq=linkedin$occurrences, main="Title", scale=c(3,0.3))
+###Indeed
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Most common words on Indeed")
+wordcloud(words=indeed$words, freq=indeed$occurrences, main="Title", scale=c(3,0.3))
+```
+
+## Bar Plots
+```{r bars, eval=TRUE}
+##LinkedIn
+ggplot(data = linkedin[is_outlier(linkedin$occurrences),], aes(x=reorder(words, -occurrences), y=occurrences)) +
+  geom_bar(stat="identity", fill="blue") +
+  labs(title="Top Data Science Skills per LinkedIn", x="Skills", y="Occurrences (#)") +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+##Indeed
+ggplot(data = indeed[is_outlier(indeed$occurrences),], aes(x=reorder(words, -occurrences), y=occurrences)) +
+  geom_bar(stat="identity", fill="red") +
+  labs(title="Top Data Science Skills per Indeed", x="Skills", y="Occurrences (#)") +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+## Points
+```{r points, eval=TRUE}
+library(ggplot2)
+library(ggrepel)
+merge <- merge(indeed, linkedin, by="words") #Only includes common words across both sites
+ggplot(data = merge, aes(x = occurrences.x, y = occurrences.y)) + 
+  geom_point() +
+  labs(title="Plot of occurrences of common words across sites", x="Occurrences on Indeed (#)", y="Occurrences on Linkedin (#)") +
+  geom_label_repel(aes(label = ifelse((is_outlier(occurrences.x) | is_outlier(occurrences.y)), as.character(words),'')),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  segment.color = 'grey50') 
+```
+
+# Findings & Conclusion
+
+We chose to look at LinkedIn and Indeed since they host the most job postings for data scientists and took the most common words from both sites. We then filtered out the words that relate to data science skills from a whitelist we created from articles and posts that talked about the most demanded and needed data science skills. We created a dataframe for the words and stored them in a SQL database. Based on the plots, we see that LinkedIn and Indeed both have similar words with a few differences. LinkedIn seems to say to have skills in Python, Modeling, and Statistics. Indeed seems to say to have skills in SQL, Python, and Modeling. Both talk about having communication and research skills. In conclusion, the most valued data science skills are programming and mathematical skills, preferably Python and SQL for programming and statistics for mathematical. Another programming skill a data scientist should know is R. Also communication, research, and modeling are valued skills a data scientist should also consider having.
