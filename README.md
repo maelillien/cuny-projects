@@ -1,7 +1,7 @@
 # cuny-projects
 A collection of personal and collaborative data science and machine learning work completed as part of the CUNY SPS Master of Data Science program.
 
-R, Python, Jupyter notebooks, Apps deployed using Dash, RShiny
+Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 #### Apps, Dashboards and Visualizations
 
