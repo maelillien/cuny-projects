@@ -1,5 +1,5 @@
 ---
-title: "Poisson Regression - Soccer Predictions"
+title: "Soccer Analysis and Modeling"
 author: "Mael Illien"
 date: "12/09/2020"
 output:
