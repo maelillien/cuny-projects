@@ -21,6 +21,8 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [spam-email-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/spam-email-classifier/data620assignment06.ipynb) - Spam email classification comparing Naive Bayes, SVM, Random Forest and Adaptive Boosting models.
 
+[recognizing-digits](https://rpubs.com/maelillien/recognizing-digits) - Recognizing digitized handwritten digits using Naive Bayes, KNN, Gradient Boosting and Random Forests.
+
 [crime-investigation](https://rpubs.com/maelillien/data607finalproject) - A socio-economic investigation into crime in NYC combining NYPD Arrests data and unemployment statistics from the Department of Labor.
 
 [nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API.
