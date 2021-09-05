@@ -1,0 +1,349 @@
+---
+title: "Recognizing Handwritten Digits"
+author: "Mael Illien, Dhairav Chhatbar, Santosh Manjrekar"
+date: "5/7/2021"
+output: 
+  html_document:
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+    toc: true
+    number_section: false
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r message=FALSE, warning=FALSE}
+library(skimr)
+library(tidyverse)
+library(gridExtra)
+library(readr)
+library(dplyr)
+library(caret)
+library(naivebayes)
+library(factoextra) # For PCA plots
+library(e1071)
+library(Rtsne)
+library(RColorBrewer)
+library(gbm)
+library(randomForest)
+```
+
+# Data Description
+
+```{r message=FALSE, warning=FALSE}
+mnist_raw <- read_csv("https://pjreddie.com/media/files/mnist_train.csv", col_names = FALSE)
+mnist_raw_test <- read_csv("https://pjreddie.com/media/files/mnist_test.csv", col_names = FALSE)
+# Reduce the dataset down from 60,000 observations
+mnist_subset <- mnist_raw %>%  head(5000)
+# Relabel X1 and add instance number
+mnist_subset <- mnist_subset  %>%  rename(label = X1) %>%  mutate(instance = row_number())
+# Split dataset into X and y
+X <- mnist_subset %>% select(contains('X'))
+y <- mnist_subset$label 
+```
+
+The MNIST dataset is a compilation of handwritten digits which have been digitzed for use in supervised machine learning classification applications. The datset is fairly large with 60,000 observations where each observation is a handwritten digit from various subjects. As a result of this diversity, each handwritten digit of the same number can have differences due to penmanship style and variation within the same penmanship style.
+
+Each handwritten digit is on a 28x28 pixel image. The digits per observation range from 0 to 9 where each observation/digit in the 28x28 pixel have had their size normalized and have been centered on the image canvas. 
+
+Below is a sample of observations from the dataset. Note that the images are grayscale. Each every pixel on the canvas is represented by a integer range from 0 to 255, where 0 means the pixel is completely white and 255 means the pixel is completely black, the ranges from 1 to 254 are the various shades of the color gray. Since each image is 28x28 pixels in size, then each image can be represented by a 28x28 size matrix. 
+
+```{r}
+# Display example instances
+pixels_gathered <- mnist_subset %>%  gather(pixel, value, -label, -instance) %>%  tidyr::extract(pixel, "pixel", "(\\d+)", convert = TRUE) %>%  mutate(pixel = pixel - 2, x = pixel %% 28, y = 28 - pixel %/% 28)
+theme_set(theme_light())
+pixels_gathered %>%  filter(instance <=12) %>%  ggplot(aes(x, y, fill = value)) +  geom_tile() +  facet_wrap(~ instance + label) + scale_fill_gradient(low = "white", high = "black")
+```
+
+To represent each matrix as an observation, each digit matrix has been flattened (converting from a multidimensional array to a single dimensional array) such that each observation is a integer list of ($28x28=784$) length 784, where each value in the list is the pixel value ranging from 0 to 255. This list has an additional value which contains a number from the range 0-9 containing the label value of the number represented by the image, bringing the length per observation to 785.  
+  
+Below is the matrix representation of observation #8 from the sample above.  
+![Matrix Representation of observation #8, the number 3](https://github.com/maelillien/data622/raw/main/hw5/Number3.png)  
+  
+Bringing this all together, the dataset has 60,000 observations, 784 features and 1 classification label. The dataset of digital images is now represented in a format suitable for analysis and modeling. To ease computation time, a subset of 5,000 observations was used in this modeling exercise.
+
+# Data Exploration
+
+The distribution of the draw of 5,000 samples from dataset is displayed below. The distribution is fairly even, though we note that the number 2 is largely more represented than the number 5. The majority of points are either 0 (white) or 255 (black). Most values are not useful which suggest that some dimensionality reduction methods might be useful. 
+
+```{r}
+plot1 <- ggplot(mnist_subset, aes(label)) + geom_bar(fill="steelblue")
+plot2 <- ggplot(pixels_gathered, aes(value)) +  geom_histogram(bins=256, fill="steelblue")
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+The figure below is a representation of the average pixels values for the 10 digits in the dataset. The fuzzy, grey areas are zones of high variability. We can notice the most variability in the tails and long strokes of some digits. On the other hand, some digits such as 0 and 1 have highler pixel concrentrations. 
+```{r message=FALSE, warning=FALSE}
+pixel_summary <- pixels_gathered %>%  group_by(x, y, label) %>%  summarize(mean_value = mean(value)) %>%  ungroup()
+pixel_summary %>%  ggplot(aes(x, y, fill = mean_value)) +  geom_tile() +  scale_fill_gradient2(low = "white", high = "black", mid = "gray", midpoint = 127.5) +  facet_wrap(~ label, nrow = 2) +  labs(title = "Average value of each pixel in 10 MNIST digits", fill = "Average value") +  theme_void()
+```
+
+# Data Processing
+
+## Dimensionality Reduction
+
+Two dimensionality reduction methods are explore, Near-Zero Variance (NVZ) and Principal Component Analysis (PCA). Another dimensionality reduction technique is t-Distributed Stochastic Neighbor Embedding (t-SNE), though is mainly used for visual exploration  
+
+### Near Zero Variance
+
+The near zero variance method looks at the distribution of variables across the dataset and identifies features with low percentages of unique values. These variables are essentially constants and contain no information. As previously shown, the dataset is sparse and the majority of the pixels are always zero. The resulting dataset retains only 250 variables. The figure below is a representation of the most variable pixels on the image canvas.
+
+```{r}
+nonzero_var <- nearZeroVar(X, saveMetrics = FALSE)
+image(matrix(1:784 %in% nonzero_var, 28, 28))
+```
+
+```{r}
+X <- mnist_subset[ , -nonzero_var]
+X <- select(X, -instance)
+```
+
+## t-Distributed Stochastic Neighbor Embedding (t-SNE)
+t-SNE is a dimensionality reduction technique that will project high dimension data into a two dimensional plane. It is an unsupervised technique that helps identify patters or clusters in the dataset. While the results of the t-SNE reduction cannot be used directly in models t-SNE helps in understanding the underlying data and relationships within and if there is good separation from t-SNE then models are more likely to have better accuracy on unseen data.
+  
+From the below t-SNE visualization we see that some digits cluster better than other digits. 0 is well clustered and is seperated, as well as 1 and 6. The other are scattered in various smaller groups
+```{r}
+tsne_v <- Rtsne(as.matrix(select(mnist_subset, -label)), dims=2, check_duplicates = FALSE, pca = TRUE, pca_scale = FALSE, theta = 0.1 , perplexity = 45)
+tsne_coords <- data.frame(X=tsne_v$Y[,1], Y=tsne_v$Y[,2], Label=as.factor(mnist_subset$label))
+ggplot(tsne_coords, aes(x=X, y=Y, color=Label)) + geom_point(size = 1) + labs(title = "t-SNE Cluster Visualization MNIST Digits") + scale_color_brewer(palette = "Set3") + theme_dark()
+```
+
+### Principal Component Analysis
+Principal Component Analysis (PCA) is a dimensionality reduction technique where a dataset is transformed to use p eigenvectors of the covariance matrix instead of the original number of predictors n, where p < n. The number of eigenvectors p is selected by looking at the sorted eigenvalues and determining a threshold percentage of variance explained and the resulting p.  
+  
+The method seeks to project the data into a lower dimensional space where each axis (or principal component) captures the most variability in the data subject to the condition of being uncorrelated to the other axes. This last condition is important for dimensionality reduction in the sense that large datasets can contain many correlated variables which hold no additional information.
+
+
+```{r}
+pca <- prcomp(select(mnist_raw, -X1), center = TRUE, scale = FALSE)
+qqnorm(pca[["x"]][,1])
+```
+
+Compared to t-SNE, the PCA reduction is much less useful and non-interpretable. This is becuase the first two Principal Components only explain approximately 18% of the variance. To get to a higher percentage of the variance explained, we will have to increase our dimensions. 
+```{r}
+fviz_pca_ind(pca,
+             geom.ind = "point", 
+             col.ind = as.factor(mnist_raw$X1),
+             addEllipses = TRUE,
+             legend.title = "Digits")
+```
+
+Post PCA execution there are 3 methods to reduce dimensionality. These 3 methods are:  
+  
+- The Kaiser Rule
+- The Scree Method
+- Cumulative Proportion of Variance Explained Method
+  
+
+*The Kaiser Rule* states that the optimal factor reduction is achieved by selecting Principal Components that have an eigenvalue greater than 1. An eigenvalue of 1 contains the same information as 1 variable Below are all dimensions/Principal Components that have the an eigenvalue that are greater than 1.
+  
+This results in far to many dimensions, 650 to be exact. This reduction would not reduce computation complexity significantly
+```{r}
+get_eigenvalue(pca) %>% filter(eigenvalue > 1)
+```
+
+*The Scree Method* states that the best number of components to reduce a dataset by is the component that forms an “elbow”. The scree plot shows that after the 3rd Principal component, additional components successively diminish in explaining the variance. 
+  
+The results of the scree plot shows that there is no such elbow to be found
+```{r}
+pca %>% fviz_eig(addlabels = TRUE)
+```
+
+The *Cumulative Proportion of Variance Explained Method* states that at least two-thirds of the variance is explained by the reduced feature set. In order words keep the number of Principal Components that cumulatively explain two-thirds of the variation and discard the Principal Components after the two-thirds mark. 
+
+In this case we will opt to select at least 95% of cumulative variance explained, and this results in a dataset that is reduced to 154 dimensions instead of 784
+
+```{r}
+reduced_dim_95 <- get_eigenvalue(pca) %>% filter(cumulative.variance.percent < 95.02)
+reduced_dim_95
+mnist_pca_reduced <- as.data.frame(pca$x[,c(1:nrow(reduced_dim_95))])
+head(mnist_pca_reduced)
+```
+
+# Modeling
+
+```{r message=FALSE, warning=FALSE}
+# Data Partitioning
+set.seed(622)
+trainIndex <- createDataPartition(y, p = .8, list = FALSE, times = 1)
+X_train <- X[trainIndex,]
+y_train <- y[trainIndex]
+X_test <- X[-trainIndex,]
+y_test <- y[-trainIndex]
+y_train <- as.factor(y_train)
+y_test <- as.factor(y_test)
+```
+
+```{r}
+performance_df <- data.frame(Model = NULL, Accuracy = NULL, Kappa = NULL)
+```
+
+## Multinomial Naive Bayes
+Naïve Bayes is a set of probabilistic algorithms that utilizes Bayes’ Theorem and probability theory to make predictions such that the algorithm looks to determine the probability of an event A given the probability that another event B has already occurred.
+  
+The Naïve Bayes model completed with an overall 83% accuracy on the test dataset and finished within seconds. The speed at which the Naïve Bayes model completes gives it a unique advantage when computational complexity and speed are driving factors. The digits that it misclassified the most compared to other digits are 5, 4, and 8. 
+```{r message=FALSE, warning=FALSE}
+nb <- multinomial_naive_bayes(select(mnist_raw, -X1), as.factor(mnist_raw$X1), laplace=5)
+summary(nb)
+nb_pred <- predict(nb, newdata = data.matrix(select(mnist_raw_test, -X1)), type = "class")
+nb_cm <- confusionMatrix(nb_pred, as.factor(mnist_raw_test$X1))
+perf_nb <- data.frame(Model = "Naive Bayes", Accuracy = nb_cm$overall[1], Kappa = nb_cm$overall[2])
+performance_df <- rbind(performance_df, perf_nb)
+nb_cm
+```
+
+## KNN
+
+K-Nearest Neighbors (KNN) algorithm is non-parametric in the sense that no coefficients are estimated. Instead KNN uses distances between observation points and identifies the k closest datapoints to determine the classification. It is typical to scale the variables in order to even out the influence of variables with large values. In our case, all variables are already on the same scale so no additional processing is required.
+
+Cross-validation over 3 folds and various values of k are used in determining the optimal parameter. The highest accuracy on the training set is reached used a model with only a single neighbor. The classification results on the test set are displayed below. This 1-NN model reaches an accuracy of 94.9%.
+
+```{r message=FALSE, warning=FALSE}
+trControl <- trainControl(method  = "cv", number  = 3)
+knn.fit <- train(X_train, y_train,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:5),
+             trControl  = trControl)
+```
+
+
+```{r}
+plot(knn.fit)
+```
+
+```{r}
+knnPredict <- predict(knn.fit, newdata = X_test) 
+knn_cm <- confusionMatrix(knnPredict, y_test)
+perf_knn <- data.frame(Model = "KNN", Accuracy = knn_cm$overall[1], Kappa = knn_cm$overall[2])
+performance_df <- rbind(performance_df, perf_knn)
+knn_cm
+```
+
+## Gradient Boosting
+
+With gradient boosting, trees are grown in a sequential way using information from previously grown trees. Boosting does not involve bootstrap sampling, instead each tree is fit on a modified version of the original data set. Unlike fitting a single large decision tree (fitting the data hard) which can lead to over-fitting, the boosting approach learns slowly. Given a current model, a decision tree is fit to the residuals from the model. Each of these trees can be rather small, with just a few terminal nodes (determined by the interaction depth parameter). By fitting small trees to the residuals, we slowly improve our estimate in areas where it does not perform well. The shrinkage parameter further slows the process down. Cross-validation over 3 folds was used to determine the optimal number of trees. This model reached 94.3% accuracy.
+
+```{r, warning=FALSE}
+tune <- FALSE
+trControl <- trainControl(method = "cv", number = 3)
+
+if (tune == TRUE) {
+  gbmGrid <-  expand.grid(interaction.depth = c(5,9), 
+                        n.trees = (1:10)*25, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+   gbm.fit <- train(X_train, y_train,
+               method     = "gbm",
+               tuneGrid   = gbmGrid,
+               trControl  = trControl,
+               verbose    = FALSE)
+} else {
+  gbmGrid <-  expand.grid(interaction.depth = 9, 
+                        n.trees = 250, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+  gbm.fit <- train(X_train, y_train,
+                method     = "gbm",
+                tuneGrid   = gbmGrid,
+                trControl  = trControl,
+                verbose    = FALSE)
+}
+```
+
+![Gradient Boosting Training](https://github.com/maelillien/data622/raw/main/hw5/gbm_train.png)  
+
+```{r}
+gbm_pred <- predict(gbm.fit, newdata = X_test)
+gbm_cm <- confusionMatrix(gbm_pred, as.factor(y_test))
+perf_gbm <- data.frame(Model = "Gradient Boosting", Accuracy = gbm_cm$overall[1], Kappa = gbm_cm$overall[2])
+performance_df <- rbind(performance_df, perf_gbm)
+gbm_cm
+```
+
+## Random Forest
+
+Random forest is a machine learning algorithm that uses a collection of decision trees to provide more flexibility and accuracy while reducing variance and the effect of multicollinearity. For each tree and at each split, a random sample of the predictors is considerered from the full set. This has the effect of making the individual trees more dissimilar. 
+
+The model is tuned via using cross-validation over five-folds in order to find the optimal number of trees. Usually, we select a cutoff where the training error settles.
+
+```{r warning=FALSE}
+control <- trainControl(method="cv", number = 5)
+grid <- data.frame(mtry = c(1, 5, 10, 25, 50, 100))
+train_rf <-  train(X_train, y_train, 
+                   method = "rf", 
+                   ntree = 150,
+                   trControl = control,
+                   tuneGrid = grid,
+                   nSamp = 5000)
+```
+
+```{r}
+print(train_rf)
+print(train_rf$bestTune$mtry)
+```
+
+The best resulting model used 25 trees in the ensemble and achieve a high accuracy of 94.1% on the test set.
+
+```{r}
+fit_rf <- randomForest(X_train, y_train, 
+                       minNode = train_rf$bestTune$mtry)
+```
+
+```{r}
+plot(fit_rf)
+```
+
+```{r}
+y_pred_rf <- predict(fit_rf, X_test)
+rf_cm <- confusionMatrix(y_pred_rf, y_test)
+rf_cm$overall["Accuracy"]
+perf_rf <- data.frame(Model = "Random Forests", Accuracy = rf_cm$overall[1], Kappa = rf_cm$overall[2])
+performance_df <- rbind(performance_df, perf_rf)
+rf_cm
+```
+
+The plot below displays the important variables in this model. Columns X380, X435, X463 among others are identified as the most important in the sense that they produce the largest decrease in mean gini index.
+
+```{r}
+varImpPlot(fit_rf)
+```
+
+# Results
+
+The summary of the modeling results are displayed below. KNN performed the best overall with the best accuracy on the test set of 94.9%.
+
+```{r}
+rownames(performance_df) <- NULL
+performance_df 
+```
+
+We can take a look at some of the misclassified instances to evaluate where the model might have gone wrong. On the tile plot below, the predicted number is on the top of the cell, and the actually digit just below it. We see that most of the instances are obvious mistakes. Other than the middle 6 and 8 and the last 7 which are fairly distorted, the other digits remain easily distinguishable to our eyes. 
+
+```{r}
+misclass <- data.frame(knn_pred=knnPredict,y_test=y_test)
+misclass <- misclass %>% mutate(row=row_number()) %>% filter(knn_pred != y_test) 
+# filter misclassified instances
+sub_test <- mnist_subset[-trainIndex,]
+sub_test <- sub_test[misclass$row,]
+sub_test$pred <- misclass$knn_pred
+# Display example instances
+pixels_gathered <- sub_test %>%  gather(pixel, value, -label, -instance, -pred) %>%  tidyr::extract(pixel, "pixel", "(\\d+)", convert = TRUE) %>%  mutate(pixel = pixel - 2, x = pixel %% 28, y = 28 - pixel %/% 28)
+theme_set(theme_light())
+pixels_gathered %>%  filter(instance <= 745) %>%  ggplot(aes(x, y, fill = value)) +  geom_tile() +  facet_wrap(~ pred + label) + scale_fill_gradient(low = "white", high = "black")
+```
+
+
+# Conclusion
+
+The intention of this project was to apply classification models on image data, in this case digited handwritten digits. The dataset is different from what we used in different projects in the sense that it only contained sparse numerical values with no categorial features. To deal with this sparsity we used dimensionality reduction techniques like NZV, t-SNE and PCA. The reduced datasets was used to train different classification models tuned to recognize handwritten digits. While Naive Bayes was inferior, most models had high accuracy. The KNN classification model has the best overall accuracy of 94.89%.
+
+Future work could include exploring neural networks method on this dataset which have demonstrated high performance with image recognition. Additional, the utilization of more powerful hardware could allow for finer tuning and training on the 60,000 observations.
