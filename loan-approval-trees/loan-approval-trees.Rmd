@@ -1,0 +1,456 @@
+---
+title: "Loan Approval Using Tree-based Methods"
+author: "Mael Illien, Dhairav Chhatbar, Santosh Manjrekar"
+date: "3/19/2021"
+output: 
+  html_document:
+    code_folding: show
+    theme: cosmo
+    highlight: tango
+    toc: true
+    number_section: false
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+```{r message=FALSE, warning=FALSE}
+library(skimr)
+library(tidyverse)
+library(caret) # For featureplot, classification report
+library(corrplot) # For correlation matrix
+library(AppliedPredictiveModeling)
+library(mice) # For data imputation
+library(VIM) # For missing data visualization
+library(gridExtra) # For grid plots
+library(rpart) # For Decision Trees models
+library(rpart.plot) # For Decision Tree Plots
+library(randomForest) # For Random Forest models
+library(randomForestExplainer) # For Random Forest Variable Importance Analysis
+library(gbm) # For Gradient Boosted Models
+library(pROC) # For AUC calculations
+library(ROCR) # For ROC and AUC plots
+```
+
+## Introduction
+
+A loan-issuance company with presence across urban, semi urban and rural areas wants to validate the eligibility of customers to be granted a loan. Using an online application form, customers enter a series of attributes such as Gender, Marital Status, Education, Number of Dependents, Income, Loan Amount, Credit History and others. To automate the eligibility process, multiple supervised classification approaches can be used. In our case, we explore tree-based methods starting from simple Decision Trees (DT). Ensemble methods such as Random Forests (RF) and Gradient Boosting (GB) are also used to improve on the classification accuracy of the simple DT.
+
+The loan dataset is composed of 13 variables and 614 observations. The target or dependent variable is `Loan_Status` and contains 'Y' or 'N' as entries. Predicting whether a loan will be approved is a supervised binary classification problem. 
+
+Eight of the variables are factors and 5 are numeric. The dataset contains missing values recorded either as 'NA' or simply empty. Some columns are missing nearly 10% of observations. Imputation of the missing values will be a step in the data pre-processing. We also note that the Loan_ID variable is simply an index and holds no valuable information, making it safe for removal. The Credit_History variable is coded as numeric but it is a binary variable with two levels.
+
+```{r}
+loan_raw <- read.csv('https://raw.githubusercontent.com/maelillien/cuny-projects/main/loan-approval-trees/Loan_approval.csv', header = TRUE)
+loan_raw <- loan_raw %>% mutate_if(is.character, factor)
+loan <- loan_raw
+```
+
+```{r}
+head(loan)
+```
+
+```{r message=TRUE, warning=FALSE}
+# replace blank values with NA to allow for proper calculation of the complete_rate column in the data summary
+loan[loan==''] <- NA 
+skim(loan)
+```
+
+## Data Pre-processing
+
+The pre-processing steps are the following:
+
+- Creating a new variable called `TotalIncome` by summing applicant and coapplicant incomes. Typically loan issuers take into account the combined income of the applicant and guarantor.
+- Dropping the valueless variable `Loan_ID` and the individual income variables that were just combined. 
+- Treating `Credit_History` as a factor with 2 levels instead of a numeric variables
+- Imputation of missing values
+
+Note that the tree based methods employed in this exercise are not required to be coded as numeric or expanded as dummy variables. We can see from the data summary above that the remainder of the variables have the proper data type.
+
+```{r}
+loan <- loan %>% mutate(TotalIncome = ApplicantIncome + CoapplicantIncome)
+loan <- loan %>% select(-c('Loan_ID','ApplicantIncome','CoapplicantIncome'))
+loan$Credit_History <- as.factor(loan$Credit_History)
+```
+
+#### Imputation of Missing Values
+
+By examining the pattern plot of missing values below, we discern a slight pattern from variable to variable and observation to observation. We can consider a few scenarios to account for the missingness. For example, individuals who are married but separated might leave the 'Married' field blank. Individuals with non-binary gender identity would not choose 'Male' or 'Female' if the option to leave the field blank is a valid entry. However, it seems possible to account for the missing values based on the complete information of other variables. We might be able to predict that an individual is married or lives in a suburban area if they have a large number of dependents. Therefore we make the assumption that this dataset has missing values at random (MAR). 
+
+The simplest way of dealing with missing values is to conduct "complete case analysis" which involves dropping observations for which predictor values are missing. However, given the small number of observations (614) in this dataset, dropping observations in such fashion would result in significant data loss. Since the variable with the most missing values (nearly 8%), namely `Credit_History`, is suspected to the very predictive we will impute the missing values using various predictive models.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+mice_plot <- aggr(loan, col=c('#F8766D','#00BFC4'), numbers=TRUE, sortVars=TRUE, labels=names(loan), cex.axis=.7, gap=3, ylab=c("Missing data","Pattern"))
+```
+
+Given the assumption that this dataset has Missing At Random Values, we can use the MICE (Multivariate Imputation via Chained Equations) package to impute the missing values throughout the dataset. For each type of predictor variable we will use:  
+  
+* `Numeric Variables`: Predictive Mean Matching (ppm)  
+* `Binary Variables`: Logistic Regression (logreg)  
+* `Factor Variables (3+ levels)`: Bayesian Polytomous Regression (polyreg)  
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# pmm for numerical variables, logreg for binary factor variables and polyreg for multilevel factor variables
+init <- mice(loan, maxit=0) 
+meth <- init$method
+predM <- init$predictorMatrix
+meth[c('LoanAmount', 'Loan_Amount_Term')] <- 'pmm'
+meth[c('Credit_History','Self_Employed','Gender','Married')] <- 'logreg'
+meth[c('Dependents')] <- 'polyreg'
+meth[c('Loan_Status','TotalIncome','Property_Area','Education')] = ''
+imputed <- mice(loan, method=meth, predictorMatrix=predM, m=5, seed=500)
+loan <- complete(imputed)
+```
+
+Below, we confirm that the imputing procedure was successful and that the dataset no longer contains missing values.
+
+```{r}
+table(complete.cases(loan))
+```
+
+## Data Exploration
+
+By examining the target variables, we see that nearly 70% of all loans are approved.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(loan, aes(Loan_Status)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), fill=c('#F8766D','#00BFC4')) + 
+  scale_y_continuous(labels=scales::percent) +
+  theme_minimal() +
+  ggtitle("Target Variable Distribution") +
+  ylab("Relative Frequencies")
+```
+
+We can make a few observations from boxplots of the numeric variables below:
+
+- `Loan_Amount_Term` only take a few discrete values representing various durations. The most common value by far, as indicated by the flat box is around 360 months meaning that the most common loan term is 30 years. This was fairly consistent across both outcomes of the dependent variable. 
+- `LoanAmount` does not greatly differ across the dependent variable. The interquartile range is slightly more compressed in the 'Y' category and there is a greater range of outliers values on the upper end of the range. The mean loan amounts were comparable for both outcomes. 
+- `TotalIncome` is fairly similar across the outcomes up to about $30,000 in total income. Interestingly, the observation with the highest total income recorded is the greatest outlier and was not issued a loan. Large skew is observed across both categories.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loan %>%  gather(key = "variable", value = "measurement", c('TotalIncome','LoanAmount','Loan_Amount_Term')) %>% 
+  ggplot(aes(Loan_Status, measurement)) + geom_boxplot(aes(fill=Loan_Status)) + 
+  facet_wrap(~variable, scales = "free") +
+  #scale_fill_manual(values = c("darkorange","purple","cyan4")) +
+  theme_minimal() +
+  ggtitle("Distribution of Numeric Variables")
+```
+
+From the bar plots of the categorical variables shwon below, we observe the following:
+
+- `Credit_History`: The majority of applicants had credit history; the large majority of which were approved for a loan. This is likely to be one of the most important factor in determining who gets a loan.
+- `Dependents`: Individuals with 0 dependents form the majority of the cohort. Individual with fewer dependents may be less risk adverse and more willing to take on debt.
+- `Education`: More individuals with graduate education applied for loans and a greater proportion of them received one in comparison to the "Not Graduate" counterparts.
+- `Gender`: More than 3 times more males applied for loans than females. Both genders seem to be granted loans in the same proportion.
+- `Married`: Married individuals applied for loans. This could be a consequence of needing to finance something like a home or a car which is more typical of married households.
+- `Property_Area`:  Inviduals living in semi-urban propety areas applied for the most number of loans but also had the greatest proportion of approved loans. Urban areas follow with with approximately 50% of approved load while rural areas has fewer applicants and a greater proportion of rejections.
+- `Self_Employed`: Individuals who were not self-employed made up the large majority of the observations. This makes sense given that in general salaried employees greatly outnumber self-employed employees. Additionally, a self-employed individual may have less consistent streams of revenue and therefore might be less willing to take on debt.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loan %>% dplyr::select(where(is.factor)) %>%  tidyr::gather(key = "variable", value = "measurement", -Loan_Status) %>% 
+  ggplot(aes(measurement)) + geom_bar(aes(fill=Loan_Status), position=position_dodge()) + 
+  facet_wrap(~variable, scales = "free") +
+  theme_minimal() +
+  ggtitle("Distribution of Categorical Variables")
+```
+
+Interestingly, there is little difference in the relationship between loan amount and total income across the credit history category as seen by the nearly collinear regression lines. The slope was slightly higher for individuals with credit history which makes sense given that individuals with credit history are in general more likely to be granted loans. We can also observe that individuals on the low end of the total income axis and below the regression line generally had credit history. These are individuals with larger incomes but requesting less sizable loans.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loan %>% ggplot(aes(x=TotalIncome, y=LoanAmount, color=Credit_History)) + 
+  geom_point(alpha = 0.5) + 
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  geom_smooth(method=lm, se=FALSE) +
+  theme_minimal() +
+  ggtitle("Loan Amount and Total Income Across Credit History")
+```
+
+The least squares lines across the dependent variable are also nearly collinear but the line representing individuals who received loans has a slightly greater slope suggesting that higher incomes unlock larger loans which is sensible and expected. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loan %>% ggplot(aes(x=TotalIncome, y=LoanAmount, color=Loan_Status)) + 
+  geom_point(alpha = 0.5) + 
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  geom_smooth(method=lm, se=FALSE) +
+  theme_minimal() +
+  ggtitle("Loan Amount and Total Income Across Loan Status")
+```
+
+Other than credit history, total income (applicant income + coapplicant income) seems like the most logical basis for approving or denying a loan. The histograms below compare total income across all levels of the categorical variables. In all plots, total income is skewed to the right tail, with a few observations at the higher end of the log-transformed income scale. From these plots, we can make a few additional observations. When looking at education, it makes sense to see more graduates at the tail end of income since their education should yield to higher paying jobs. The gender distribution is consistent with the discriminatory pay gap between men and women. The remaining plot do not provide much additional insight.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(12,10)}
+p1 <- ggplot(data=loan, aes(x=TotalIncome, fill=Education)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+p2 <- ggplot(data=loan, aes(x=TotalIncome, fill=Gender)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+p3 <- ggplot(data=loan, aes(x=TotalIncome, fill=Self_Employed)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+p4 <- ggplot(data=loan, aes(x=TotalIncome, fill=Credit_History)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+p5 <- ggplot(data=loan, aes(x=TotalIncome, fill=Property_Area)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+p6 <- ggplot(data=loan, aes(x=TotalIncome, fill=Dependents)) + geom_histogram(alpha=0.5) +  scale_x_continuous(trans='log10')
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 2)
+```
+
+## Data Processing
+
+The data pre-processing section the structural form of the data. No additional processing is required for tree-based methods. We partition our data into training and testing sets in a 70%/30% proportion.
+
+```{r}
+set.seed(622)
+trainIndex <- createDataPartition(loan$Loan_Status, p = .7, list = FALSE, times = 1)
+training <- loan[ trainIndex,]
+testing  <- loan[-trainIndex,]
+```
+
+
+## Decision Trees
+
+A Decision Tree is a type of supervised learning model where the data is recursively split into two or more sub-populations given a criteria. Each split is headed by a node, where the upper most node is called the root node, and nodes which cannot be split further are called terminal (leaf) nodes. All other nodes are considered internal nodes. Based on a given population of observations, the population is split into sub-populations with the criteria that each split separates the sub-population better than the previous split. This recursive splitting cycles through the different predictor variables in order to find leaf nodes that make the purest class separation or most accurate predictions.
+
+The Decision Tree model can be used for regression and classification. In this case we use the model for classification of loan approvals. 
+
+### Simple Tree
+
+The first step is to grow a baseline decision tree based on splits generating the most Information Gain, which is based on the decrease in entropy after a dataset is split on a given attribute. Entropy is a measure of node purity.   
+
+After growing a complete simple tree, we will need to decide if it requires pruning in order to reduce its complexity. Overly complex trees have high variance and do not predict well on new, unseen data. In our case, we use the Complexity Parameter set to a value of 0 as a measure of the required split improvement. The Cost Complexity parameter is slightly different from Information Gain and Gini index, but is conceptually similar. The parameter modulates the amount by which splitting a given node improved the relative error, in other words, it is the minimum improvement in the overall model needed at each node to justify the split. 
+
+```{r}
+loan_dt <- rpart(Loan_Status ~., data = training, method = "class", parms = list(split="information"), control = rpart.control(cp=0))
+loan_dt
+```
+The tree fitted on the training data is displayed below. The simple baseline tree is 8 levels deep. Each node shows the predicted class, the probability of that class and the percentage of observations that fall into the given node. By studying the splits, we see that after rejecting an applicant based on the lack of credit history, the applicant has a 81% percent of being approved regardless of all the other variables. Factoring in `TotalIncome` which is an important feature of any loan application, only increased the percentage of approval by 1% to 82%. Further splitting by Loan Amount and Property Area only increased accuracy by 1% for each step.
+
+```{r, fig.height=10, fig.width=14}
+rpart.plot(loan_dt, box.col = c("pink", "palegreen3")[loan_dt$frame$yval])
+```
+
+To evaluate the simple tree model, we predict `Loan_Status` on the test set and calculate the performance metrics. The confusion matrix below summarizes the results. We also record the accuracy, sensitivity and specificity performance metrics in a data frame for comparison with alternative classification methods.
+
+```{r}
+loan_dt_pred <- predict(loan_dt, testing, type = "class")
+dt_cm <- confusionMatrix(loan_dt_pred, testing$Loan_Status)
+dt_cm$table
+```
+
+
+```{r}
+performance_df <- data.frame(Model = NULL, Accuracy = NULL, Sensitivity = NULL, Specificity = NULL)
+perf_dt <- data.frame(Model = "Base Decision Tree", Accuracy = dt_cm$overall[1], Sensitivity = dt_cm$byClass[1], Specificity = dt_cm$byClass[2])
+performance_df <- rbind(performance_df, perf_dt)
+perf_dt
+```
+
+### Pruned Tree
+
+In order to obtain a tree which generalizes better to unseen data (lower variance), we now prune the tree based on cross-validated error rates. We look for the Cost Complexity parameter which results in the lowest cross-validation error rate. The tuned parameter is then fed back into the tree growing procedure and is used as a threshold to exceed to justify a node split. This ensures that the tree does not grow past certain nodes for which the cross-validation error rate is not minimal.
+
+The tuning procedure indicated that the Decision Tree which provided the most accurate predictions is the minimal tree containing 2 terminal node, with just a single split on Credit History. This is an unrealistic tree which would limit the business loan issuing volume and for practical reasons, we chose to use the cost complexity parameter where the pruned tree contained at least 2 splits. From the tuning output below we see on the upper axis that the error rate is minimized with a tree of size 2, but the relative error only marginally increased when a tree with 3 terminal nodes was used.
+
+```{r}
+plotcp(loan_dt)
+cost_complexity_dt <- data.frame(printcp(loan_dt))
+min_err <- (cost_complexity_dt %>% filter(nsplit > 1) %>% slice(which.min(xerror)))$CP
+cat("Minimum Error: ", min_err)
+```
+
+The resulting tree with 3 terminal nodes is displayed below and the most significant predictors are `Credit History` and `Total Income`.
+
+```{r}
+loan_dt_prune <- prune(loan_dt, min_err)
+rpart.plot(loan_dt_prune, box.col = c("pink", "palegreen3")[loan_dt$frame$yval])
+```
+
+As before, the classification result on the test set in summarized in the confusion matrix and in the data frame row below.
+
+```{r}
+loan_dt_prune_pred <- predict(loan_dt_prune, testing, type = "class")
+dt_pruned_cm <- confusionMatrix(loan_dt_prune_pred, testing$Loan_Status)
+dt_pruned_cm$table
+```
+
+```{r}
+perf_dt_pruned <- data.frame(Model = "Pruned Decision Tree", Accuracy = dt_pruned_cm$overall[1], Sensitivity = dt_pruned_cm$byClass[1], Specificity = dt_pruned_cm$byClass[2])
+performance_df <- rbind(performance_df, perf_dt_pruned)
+perf_dt_pruned
+```
+
+## Random Forest
+
+The Random Forest model is an ensemble method built from many individual decision trees and the classification output is determined by majority voting. The method aims to reduce the variance of individual trees and is particularly suited when predictors exhibit collinearity. Each tree in the forest is constructed using bootstrapped observations and a randomized subset of features. The forest growing procedure is controled by two tuning parameters that we seek to optimize:
+  
+* `ntree`: the number of trees in the forest
+* `mtry`: the number of random variables used to build each tree 
+
+For classification exercises, the default subset of variables is the square root of the total number of predictor variables. Since we have 10 predictor variables in our dataset, the default value is 3. 
+
+When using bootstrapped samples, about a third of the observations are not used in construction of the trees, and the model's prediction on these unseen observations is referred to as the Out of Bag Error. From the tuning results below we see random predictor subsets of size 2 and 3 per tree generates the identical values for the lowest Out of Bag error. The optimal value is chosen to be 2 by the model which is subsequently used as the `mtry` parameter.
+
+```{r}
+min_tree_var <- tuneRF(x = subset(training, select = -Loan_Status), y=training$Loan_Status, ntreeTry = 500)
+val_opt <- min_tree_var [,"mtry"][which.min(min_tree_var [,"OOBError"])]
+loan_rf <- randomForest(Loan_Status ~., data = training, importance = TRUE, ntree=500, mtry = val_opt)
+loan_rf
+```
+  
+Next we generate a large number of forests of different sizes in order to identify the parameter for which the Out Of Bag (OOB Error) error rates is minimal. From the plot of error rates below, we see that the OOB error rate decreases significantly up to about 50 tress, and further stabilizes around 100 trees. For this dataset 500 trees is more than enough to minimize the OOB Error rate.
+
+```{r}
+plot(loan_rf, col = c("black", "red", "green"), lty = c(1, 1, 1), main = "Predicted Loan Error Rates")
+legend("right", c(OOB = "Out of Bag Error", "Denied", "Appoved"), col = c("black", "red", "green"), lty = c(1, 1, 1))
+```
+  
+Similarly to Decision Trees, we are interested in predictive power of individual variables but but in Random Forests, the most predictive feature is obscured by the complexity and not simply found at the top of the tree. We turn to Variable Importance, which is a scale of a given variable's predictive power which is derived by taking the average purity of child nodes that the split causes across all trees in the forest. Variables with large increases in purity are considered more "important".  
+  
+Below is a table of the predictor variables and their various importance factors. Some definitions are provided below to help interpret the following table:  
+  
+* `Accuracy Decrease`: The decrease in accuracy of the overall model if a given predictor is not used in the model  
+* `Gini Decrease`: Each split results in a reduction in the Gini Index. The Gini Decrease is an average of this Gini Index reduction across the entire forest   
+* `Mean_min_depth`: The average depth in a tree that a given node is found at
+
+```{r}
+var_imp <- measure_importance(loan_rf)
+var_imp[,1:7]
+```
+  
+We can visualize this table in a few ways which are presented below. We make the following observations:
+  
+* Predictors that yield the highest purity are selected first and are often found at the top of trees 
+* `Credit History` and `Total Income` are the the most important predictors because they are most often at the root of individual trees and have the lowest average depth 
+
+
+```{r}
+plot_min_depth_distribution(min_depth_distribution(loan_rf), mean_sample = "relevant_trees")
+plot_multi_way_importance(var_imp, size_measure = "times_a_root")
+```
+  
+Studying the multi-way importance plot we see that `Credit History` stands alone with the largest accuracy decrease if the variable is omitted from model and has the highest Gini decrease of all variables. Interestingly the accuracy decrease when excluding `Total Income`'s is mostly in line with the other predictors, much less than `Credit History`. However, it retains a higher gini decrease than the rest of the other predictors.
+  
+```{r}
+plot_multi_way_importance(loan_rf, x_measure = "accuracy_decrease", y_measure = "gini_decrease")
+```
+  
+The classification results and metrics of the Random Forest model is summarized below.
+
+```{r}
+loan_rf_pred <- predict(loan_rf, testing, type = "class")
+rf_cm <- confusionMatrix(loan_rf_pred, testing$Loan_Status)
+rf_cm$table
+```
+
+```{r}
+perf_rf <- data.frame(Model = "Random Forest", Accuracy = rf_cm$overall[1], Sensitivity = rf_cm$byClass[1], Specificity = rf_cm$byClass[2])
+performance_df <- rbind(performance_df, perf_rf)
+perf_rf
+```
+
+## Gradient Boosting
+
+Gradient Boosting is another kind of ensemble modeling technique in which several basic models referred to as weak learners are combined to improve performance. Instead of building models in parallel and determining the output using majority voting, models are run in an additive series fashion, with each model output serving as an input to the next. This iterative procedure improves results with each new run of the classifier. Given sufficient iterations, the training error can be reduced to zero at the expense of computational speed. Gradient boosting is a "slow" learning method modulated by the shrinkage parameter `lambda`.
+
+With gradient boosted trees, the performance of each individual tree is rather low. The weak learners are usually shallow trees which can be as simple as stumps. The error of each classification step (pseudo-resdiuals) is weighted in order to place more emphasis on the misclassified observations. The procedure is further controled by two additional parameters: number of trees and interaction depth (number of splits).
+
+```{r}
+set.seed(123)
+# gmb requires recoding the response as numeric
+training$Loan_Status <- ifelse(training$Loan_Status == "Y", 1, 0)
+
+loan_boost <- gbm(Loan_Status ~., data = training, 
+              n.trees=500,
+              interaction.depth=4,
+              shrinkage=0.01,
+              bag.fraction=0.5,
+              distribution="bernoulli",
+              verbose=FALSE,
+              cv.folds = 5,
+              n.cores=2
+              )
+```
+
+Using cross-validation to find the optimal paramter for the number of trees yielded a value of 207 which is the value used to compute our predictions.
+
+Examining feature importance, we once again see that `Credit_History` and `TotalIncome` are the most important predictors. Interstingly, `LoanAmount` holds a higher importance that in other models. We also notice that predictors such as `Gender` are on the low end of importance which is something that we would hope to be true as gender should have no value in determining if an individual should be issued a loan.
+
+```{r}
+# Check performance using 5-fold cross-validation
+best.iter <- gbm.perf(loan_boost, method="cv")
+print(best.iter)
+summary(loan_boost)
+```
+
+As before, classification results are summarized below.
+
+```{r}
+# gmb requires recoding the response as numeric
+testing$Loan_Status <- ifelse(testing$Loan_Status == "Y", 1, 0)
+loan_gb_prob <- predict(loan_boost, newdata = testing, n.trees = best.iter, type = "response")
+loan_gb_pred <- as.factor(ifelse(loan_gb_prob > 0.5, 1, 0))
+gb_cm <- confusionMatrix(loan_gb_pred, as.factor(testing$Loan_Status))
+gb_cm$table
+```
+
+```{r}
+perf_gb <- data.frame(Model = "Gradient Boosting", Accuracy = gb_cm$overall[1], Sensitivity = gb_cm$byClass[1], Specificity = gb_cm$byClass[2])
+performance_df <- rbind(performance_df, perf_gb)
+perf_gb
+```
+
+## Model Performance
+
+Looking at the performance table below, we see that the accuracy rate on the test dataset of the Random Forest and Gradient Boosting models are almost the same at approximately at 79%. Random Forest has a slight edge in accuracy. The Pruned Decision Tree model is very close behind with an accuracy rate of approximately 78%. 
+
+With that said, it is worthwhile to look more into where these models are more accurate and where are they not. While no model in the real-world scenario will have a 100% accuracy rate of new data, we will have to decide which type of incorrect prediction is more costly to the business. For our business scenario of loan approval, it is less costly to deny a loan to someone who might pay it back than to grant one to someone who will not. Therefore, we will want to minimize the applicants that are likely to default on a loan. We can do this by investigating the `Sensitivity` and `Specificity` for each of the models:  
+  
+* `Sensitivity (True Positive Rate)`: measures the proportion of applicants that were predicted as approved who were actually approved in the test dataset  
+* `Specificity (True Negative Rate)`: measures the proportion of applicants that were predicted to be rejected for a loan and were also rejected for the loan in the test dataset  
+  
+A model with high sensitivity but low specificity would be more likely to approve loans for applicants who should not receive one. For this reason, the Random Forest model which has the highest specificity is the lowest risk option and is the model of choice given the high specificity rate and the highest accuracy rate. 
+
+An interesting notion here is that having a low sensitivity would mean a lost opportunity for the company to issue loands to lower risk individuals. Ultimately, the balance of sensitivity and specificity is dependent on the risk tolerance of the company. The Random Forest and Gradient Boosted Tree models have the highest specificity but lower sensitivity than the simple decision tree. Further analysis would need to be conducted on much additional revenue would be generated by lowering the specificity in favor of sensitvity which is outside the scope of this study. 
+
+Ultimately, the ensemble models provided the most risk balanced performance over the single tree models, with Random Forest edging out higher overall accuracy.
+
+```{r}
+rownames(performance_df) <- NULL
+performance_df 
+```
+
+We can diagnose the best overall classifier by comparing the area under the curve (AUC) of the receiver operating characteristics curve (ROC) as shown on the plot below. The ideal classifier hugs the top left corner. As stated earlier, the ensemble models provide performance enhacements over the base and pruned trees. The Gradient Boosted tree model has the highest AUC value of 0.757 while the Random Forest model slightly lower at 0.746. However, we stick with the conclusion that the Random Forest model is slightly superior due to the minor sensitivity improvement over the Gradient Boosted model
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loan_dt_prob <- predict(loan_dt, testing, type = "prob")[,"Y"]
+loan_dtp_prob <- predict(loan_dt_prune, testing, type = "prob")[,"Y"]
+loan_rf_prob <- predict(loan_rf, testing, type = "prob")[,"Y"]
+auc1 <- pROC::auc(roc(testing$Loan_Status, loan_dt_prob))
+auc2 <- pROC::auc(roc(testing$Loan_Status, loan_dtp_prob))
+auc3 <- pROC::auc(roc(testing$Loan_Status, loan_rf_prob))
+auc4 <- pROC::auc(roc(testing$Loan_Status, loan_gb_prob))
+
+preds <- cbind(p1 = loan_dt_prob, 
+               p2 = loan_dtp_prob,
+               p3 = loan_rf_prob,
+               p4 = loan_gb_prob)
+
+n <- 4 # you have n models
+colors <- c('red', 'blue', 'green','orange') # 2 colors
+aucs <- c(auc1, auc2, auc3, auc4)
+pos <- c(0.8,0.75,0.7,0.65)
+
+for (i in 1:n) {
+   plot(performance(prediction(preds[,i],testing$Loan_Status),"tpr","fpr"), add=(i!=1), col=colors[i], lwd=1)
+   text(0.8, pos[i], labels=sprintf("AUC: %0.3f", aucs[i]), col=colors[i])
+}
+legend(x = "bottomright", 
+       legend = c("Decision Tree", "Pruned Decision Tree", "Random Forest", "Gradient Boosting"),
+       fill = colors)
+title("Model Performance Comparison")
+```
+
+
+
