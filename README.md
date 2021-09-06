@@ -25,6 +25,8 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 [unsupervised-pca-clustering](https://rpubs.com/maelillien/unsupervised-pca-clustering) - An exploration of responses to ADHD and mood disorder questionnaires using hierarchical clustering and principal component analysis.
 
+[loan-approval-trees](https://rpubs.com/maelillien/loan-approval-trees) - Using tree-based methods to predict whether an individual should be granted a loan. Classification methods include Decision Trees, Random Forests and Gradient Boosted Trees.
+
 [crime-investigation](https://rpubs.com/maelillien/data607finalproject) - A socio-economic investigation into crime in NYC combining NYPD Arrests data and unemployment statistics from the Department of Labor.
 
 [nyc-location-network](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/nyc-location-network/data620project1.ipynb) - A network analysis of NYC venue locations using data from the Foursquare API.
