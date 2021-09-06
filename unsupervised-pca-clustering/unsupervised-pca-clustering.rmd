@@ -1,0 +1,479 @@
+---
+title: "Unsupervised Learning: Hierarchical Clustering and PCA"
+author: "Mael Illien"
+date: "4/12/2021"
+output: 
+  html_document:
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+    toc: true
+    number_section: false
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+```{r message=FALSE, warning=FALSE}
+library(skimr)
+library(tidyverse)
+library(caret) # For featureplot, classification report
+library(corrplot) # For correlation matrix and PCA contributionplots
+library(AppliedPredictiveModeling)
+library(mice) # For data imputation
+library(VIM) # For missing data visualization
+library(gridExtra) # For grid plots
+library(dendextend) # For dendrograms
+library(factoextra) # For PCA plots
+```
+
+
+# ADHD Dataset
+
+This dataset is composed of real patient responses to two questionnaires related to ADHD and Mood Disorder and a variety of demographic, abuse and drug use variarables. For each questionnaire, the responses to individual questions are provided along with total scores. Links to the actual questions are provided below:
+
+  - [Adult ADHD Self-Report Scale Symptom Checklis](https://add.org/wp-content/uploads/2015/03/adhd-questionnaire-ASRS111.pdf)
+  - [Mood Disorder Questionnaire](https://www.ohsu.edu/sites/default/files/2019-06/cms-quality-bipolar_disorder_mdq_screener.pdf)
+
+This work will make use of unsupervised learning techniques such as Principal Component Analysis (PCA) and clustering in an attempt to discover underlying structures in the data.
+
+# Data
+
+The dataset is composed of 54 variables and 175 observations. The data is coded as `numeric` and holds 33 observations that have some level of missing data. A summary of the variable distributions is provided below:
+
+```{r message=FALSE, warning=FALSE}
+adhd_raw <- read.csv('https://raw.githubusercontent.com/maelillien/cuny-projects/main/unsupervised-pca-clustering/adhd_data.csv', header = TRUE)
+adhd <- adhd_raw
+head(adhd)
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd[adhd==''] <- NA 
+skim(adhd %>% select(-c(ADHD.Q1:ADHD.Q18, MD.Q1a:MD.Q3)))
+```
+
+
+## Data Processing
+
+The dataset is modified to include an `EducationLevel` categorical variable derived from the numerical `Education` variables representing the years of schooling. The `Abuse` column is unfolded into 3 binary variables indicating the occurence of the 3 types of abuse. The original `Abuse` variable is dropped.
+
+We work with a multiple subsets of the data for subsequent parts this report. Some analyses make use of the entire set of questionnaire reponses while others use only the total score. 
+
+```{r message=FALSE, warning=FALSE}
+# Renaming variables
+adhd <- rename(adhd, ADHDTotal = ADHD.Total, MDTotal = MD.TOTAL, Sedatives = Sedative.hypnotics, CourtOrder = Court.order, 
+               Violence = Hx.of.Violence, Conduct = Disorderly.Conduct, NonSubstDX = Non.subst.Dx, SubstDX = Subst.Dx, PsychMeds = Psych.meds.)
+# Drop Initial column
+adhd <- adhd %>% select(-c(Initial))
+# Shift sex variable to 0 and 1
+adhd$Sex <- adhd$Sex-1
+# Re-coding Education Variable, College = Education > 12, HS = Education > 8 & <= 12, MS = Education <= 8 
+adhd$EducationLevel <- ifelse(adhd$Education <= 8, 1, ifelse(adhd$Education <= 12 & adhd$Education > 8, 2, ifelse(adhd$Education > 12, 3, 99)))
+# Creating new variables based on type of abuse
+adhd$AbuseP <- as.numeric(adhd$Abuse == 1 | adhd$Abuse == 4 | adhd$Abuse == 5 | adhd$Abuse == 7)
+adhd$AbuseS <- as.numeric(adhd$Abuse == 2 | adhd$Abuse == 4 | adhd$Abuse == 6 | adhd$Abuse == 7)
+adhd$AbuseE <- as.numeric(adhd$Abuse == 3 | adhd$Abuse == 5 | adhd$Abuse == 6 | adhd$Abuse == 7)
+adhd <- adhd %>% select(-c(Abuse))
+# Forming data subsets: full set of variables or reduced (totals only)
+adhd.full <- adhd
+adhd.red <- adhd %>% select(c(Age, Sex, Race, ADHDTotal, MDTotal, Alcohol:AbuseE))
+# Set all characters to numeric
+adhd.red <- mutate_all(adhd.red, function(x) as.numeric(as.character(x)))
+adhd.full <- mutate_all(adhd.full, function(x) as.numeric(as.character(x)))
+```
+
+#### Missing Values
+
+The dataset contains a few missing values. The PsychMeds variable mostly contained missing values and was dropped entirely. A few observations were quite sparse and only contained basic demographic and questionnaire score columns. In order to avoid biasing the dataset with imputed values, we preferred to drop all observations with missing values from the dataset. The resulting dataset contains 33 fewer observations with 142 complete rows and 19 columns.
+
+```{r message=FALSE, warning=FALSE}
+mice_plot <- aggr(adhd.red, col=c('#F8766D','#00BFC4'), numbers=TRUE, sortVars=TRUE, labels=names(adhd.red), cex.axis=.7, gap=3, ylab=c("Missing data","Pattern"))
+```
+
+```{r message=FALSE, warning=FALSE}
+# Discard PsychMeds
+adhd.red.complete <- adhd.red %>% select(-c(PsychMeds))
+adhd.full.complete <- adhd.full %>% select(-c(PsychMeds))
+# Keep only complete cases
+adhd.red.complete <- adhd.red.complete[complete.cases(adhd.red.complete),]
+adhd.full.complete <- adhd.full.complete[complete.cases(adhd.full.complete),]
+```
+
+## Data Exploration
+
+The plots below explore the distributions of subsets of the data. 
+
+The various distribution of the responses to the ADHD questionnaire are displayed below. Some variables are unimodal, others bimodal, some are centered and others skewed. Reference should be made to the survey questions in order to gain deeper insight of these distributions. 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+adhd.full %>% dplyr::select(contains('ADHD.Q')) %>%  tidyr::gather(key = "variable", value = "measurement",everything()) %>% 
+  arrange(desc(variable)) %>%
+  ggplot(aes(measurement)) + geom_bar(position=position_dodge(), fill="steelblue") + 
+  facet_wrap(~variable, scales = "free") +
+  theme_minimal() +
+  ggtitle("Distribution of ADHD Questionnaire Responses")
+```
+
+For the Mood Disorder questionnaire, the majority of the binary responses were 1. The classes are fairly balance expect for a few questions. Q2 is particularly unbalanced. The distribution of the responses to Q3 is highly skewed to the left tail.  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+adhd.full %>% dplyr::select(contains('MD.Q'))  %>%  tidyr::gather(key = "variable", value = "measurement",everything()) %>% 
+  ggplot(aes(measurement)) + geom_bar(position=position_dodge(), fill="steelblue") + 
+  facet_wrap(~variable, scales = "free") +
+  theme_minimal() +
+  ggtitle("Distribution of Mood Disorder Questionnaire Responses")
+```
+
+#### Distribution of Binary and Ordinal Variables
+
+A few observations on the binary and ordinal variables:
+
+  - Most participants have not been abused but a noteworthy number of paricipates have suffered emotional, physical and sexual abuse or a combination of the three. 
+  - Alcohol, Cocaine and THC are similarly distributed with the highest densities at the extremes of the range
+  - The majority of participants have a history of disorderly conduct, some were violent but only few have received a court order
+  - Opiods, Stimulants and Sedatives which are fairly similar in nature are similarly distributed with mostly no use
+  - Sex is not quite balanced and Race is mostly limited to two classes
+  - A significant proportion of the sample population attempted suicide
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+adhd.full %>% dplyr::select(!contains('.Q')) %>%  
+  dplyr::select(!c('Age','ADHDTotal','MDTotal','Education')) %>%
+  tidyr::gather(key = "variable", value = "measurement",everything()) %>% 
+  ggplot(aes(measurement)) + geom_bar(position=position_dodge(), fill="steelblue") + 
+  facet_wrap(~variable, scales = "free") +
+  theme_minimal() +
+  ggtitle("Distribution of Binary and Ordinal Variables")
+```
+
+#### Discrete Variables
+
+  - The ADHDTotal variable is unimodal is fairly spread out over the middle of the range 20-45
+  - Age is bimodal with peaks at 25 and 45 years of age
+  - Education is also unimodal with a peak at 12 which which corresponds to finishing high school
+  - MDTotal is unimodel but skewed to the left tail with a mean around 11
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+adhd.full %>% dplyr::select(!contains('.Q')) %>%  
+  dplyr::select(c('Age','ADHDTotal','MDTotal','Education')) %>%
+  tidyr::gather(key = "variable", value = "measurement",everything()) %>% 
+  ggplot(aes(measurement)) + geom_density(fill="steelblue") + 
+  facet_wrap(~variable, scales = "free") +
+  theme_minimal() +
+  ggtitle("Distribution of Discrete Variables")
+```
+
+# Clustering
+
+Clustering refers to a broad set of techniques for finding subgroups, or clusters, in a dataset. We seek to partition observations into distinct groups so that the observations within each group are quite similar to each other, while observations in different groups are quite different from each other. The most popular clustering approaches are K-means and Hierarchical Clustering (HC). While the former requires a pre-specified number of clusters k, the latter does not. HC is a bottom-up or agglomerative clustering approach which results in an upside-down tree representation, built from the leaves and combined into clusters up to the trunk. Clusters are identified by horizontal cuts across the dendrogram.
+
+In this section, we explore the use of Hierarchical Clustering on two portions of the data. The first uses only the questionnaire responses to ADHD while the second uses the total questionnaire scores for both surveys as well as the other variables (demographic, drugs, abuse, etc). The latter is referred to as the 'reduced' dataset.
+
+Clustering typically requires the variables to be scaled in order to avoid more weight to variables using a larger range of values. However, when all the variables under conideration are measured on the same scale, which is the case when only comparing survey responses, it can be appropriate to leave the variables unscaled.
+
+With HC, the concept of dissimilarity between a pair of observations needs to be extended to a pair of groups of observations. This extension is achieved with the notion of linkage, which defines the dissimilarity between two groups of observations. The resulting dendrogram heavily depends on the choice of linkage. The most popular linkages are complete and average because they tend to result in more balanced clusters. 
+
+### ADHD Questionnaire
+
+Using only the individual unscaled responses to the ADHD Questionnaire, we obtain the following dendrogram structure using complete linkage. In this case, complete linkage provided the best balancing and a cutoff into 3 clusters looked appropriate. In order to gain insight into these clusters, we need to look at the distribution of the variables within each of them. 
+
+For these 3 clusters, we can make the following observations:
+
+  - The clusters have very similar average age.
+  - The consistuents of cluster 3 have the lowest average ADHD and Mood Disorder total scores.
+  - Cluster 1 in on the other end of the spectrum and has the largest average lowest average ADHD and Mood Disorder total scores.
+  - Clusters 2 is the largest subgroup with scores falling in between clusters 1 and 3 
+  
+We can establish a ranking for this clustering based on the monotic rise in the meanADHD and meanMD across clusters. From less to most severe: Cluster 3, Cluster 2, Cluster 1. With this information, a treatment plan could be developped to focus on clusters 2 and 1, with the latter requiring special attention.
+
+```{r message=FALSE, warning=FALSE}
+hc0 <- adhd.full %>% select(ADHD.Q1:ADHD.Q18) %>% dist(method = "euclidean") %>% hclust(method = "complete")
+dend0 <- hc0 %>% as.dendrogram
+sub_grp0 <- cutree(dend0, k = 3, order_clusters_as_data = TRUE)
+dend0 %>% set("branches_k_color", k = 3) %>% set("labels", "") %>% plot(main = "Hierarchical Clustering ADHD Questionnaire")
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd.full %>%
+  mutate(cluster = sub_grp0) %>%
+  group_by(cluster) %>%
+  summarise(meanAge = mean(Age), meanMD = mean(MDTotal), meanADHD = mean(ADHDTotal), count = n()) %>%
+  gather(var,value,meanAge:count) %>%
+  ggplot(aes(cluster,value,fill=cluster)) + 
+  geom_col() + facet_grid(var ~ ., scales="free_y") +
+  geom_text(aes(label=round(value,1)), vjust=1.6, color="white", size=3.5) + 
+  ggtitle('ADHD Questionnaire Cluster Distribution')  +
+  theme_minimal()
+```
+
+### Reduced Dataset
+
+For a contrasting analysis, we looked at clustering based on the dataset which included only the total questionnaire scores and dropped observations with missing values. The variables were scaled to balance out the contribution of the high values for scores and age. We explore the use of complete, average and Ward linkages.
+
+#### Complete Linkage
+
+Unlike the previous clustering, adding the other variables results in a less balanced dendrogram. In this case, most clusters contain only a few observations and two large clusters contain the majority of the data. We can make a few additional observations:
+
+  - The largest cluster, Cluster 1, is on the higher end of meanAge but has the lowest average ADHD and comparable MD scores. The value for meanADHD in this group is about twice the value of the least severe group in the previous cluster (ADHD only). 
+  - Clusters 3 and 6 have the highest meanADHD and meanMD scores with the difference that Cluster 6 is 15 years younger on average. These individuals may consitute a subgroup for potential treatment.
+  - Cluster 2 has the highest meanAge but slightly lesser meanADHD and meanMD scores than Clusters 4 and 5, which have roughly the samnme averages. 
+
+Based on the variable distributions, it might be tempting to want to group clusters 4 and 5 together since they represent a cohort with similar meanAge, meanMD and meanADHD scores. However, hierachichal clustering considers more variables than the aforementioned few and this kind of grouping would violate the measure of similarity as determined by the y axis of the dendrogram.
+
+A proposed ADHD and Mood Disorder ranking in 4 levels from least severe to most severe is: Cluster 2, Clusters 1, 4 & 5, Clusters 3 (older) & 6 (younger).
+
+```{r message=FALSE, warning=FALSE}
+hc1 <- adhd.red.complete %>%  scale %>% dist(method = "euclidean") %>% hclust(method = "complete")
+dend1 <- hc1 %>% as.dendrogram
+sub_grp1 <- cutree(dend1, k = 6)
+dend1 %>% set("branches_k_color", k = 6) %>% set("labels", "") %>% plot(main = "Hierachical Clustering Reduced Dataset + Complete Linkage")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  mutate(cluster = sub_grp1) %>%
+  group_by(cluster) %>%
+  summarise(meanAge = mean(Age), meanMD = mean(MDTotal), meanADHD = mean(ADHDTotal), count = n()) %>%
+  gather(var,value,meanAge:count) %>%
+  ggplot(aes(cluster,value,fill=cluster)) + 
+  geom_col() + facet_grid(var ~ ., scales="free_y") +
+  geom_text(aes(label=round(value,1)), vjust=1.6, color="white", size=3.5) + 
+  ggtitle('Reduced Dataset + Complete Linkage Cluster Distribution') +
+  theme_minimal()
+```
+
+#### Average Linkage
+
+Average linkage completely changes the dendrogram representation. The number of clusters, k=5 seemed appropriate. Similarly to complete linkage, one large cluster is identified, this time containing the vast majority of the observations. This obscures the analysis beyond what we can establish about the small clusters. 
+
+  - Clusters 6 and Cluster 5, of size 1 and 2 respectively, represented the most severe cases. The single individual in Cluster 6 was 10 years younger. It is interesting to note that Cluster 5 in more similar to the rest of the data in term of hierachy than to Cluster 6. 
+  - Cluster 2 also had the maximum meanADHD score but a meanMD score comparable to other groupings
+  - Clusters 3 and 4 contain only a handful of individuals which have quite similar metrics on average.
+  - The large Cluster 1 is on average nearly the older cohort but must contain a variety of individuals that may have large variations in ADHD and MD scores but are nevertheless similar based on other attributes. The average ADHD and MD scores are lower in this group than in any other cluster. 
+
+```{r message=FALSE, warning=FALSE}
+hc2 <- adhd.red.complete %>%  scale %>% dist(method = "euclidean") %>% hclust(method =  'average')
+dend2 <- hc2 %>% as.dendrogram
+sub_grp2 <- cutree(dend2, k = 5)
+dend2 %>% set("branches_k_color", k = 5) %>% set("labels", "") %>% plot(main = "Hierachical Clustering Reduced Dataset + Average Linkage")
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  mutate(cluster = sub_grp2) %>%
+  group_by(cluster) %>%
+  summarise(meanAge = mean(Age), meanMD = mean(MDTotal), meanADHD = mean(ADHDTotal), count = n()) %>%
+  gather(var,value,meanAge:count) %>%
+  ggplot(aes(cluster,value,fill=cluster)) + 
+  geom_col() + facet_grid(var ~ ., scales="free_y") +
+  geom_text(aes(label=round(value,1)), vjust=1.6, color="white", size=3.5) + 
+  ggtitle('Reduced Dataset + Average Linkage Cluster Distribution') +
+  theme_minimal()
+```
+
+#### Ward Linkage
+
+While average linkage is a popular option, the resulting clustering above was somewhat unattractive. Here we consider another linkage method to expand the analysis. Ward linkage makes use of Ward's minimum variance criterion which seeks to minimize the total within-cluster variance. The resulting dendrogram is visually attractive and more balanced than before. A cutoff at k=3 clusters seems appropriate. This grouping is more similar to the one that relied only on the ADHD questionnaire responses. Here, Cluster 3 is the oldest group but also has the lowest meanADHD and meanMD scores. Clusters 1 and 2 are less obvious to differentiate since Cluster 2 has the highest meanADHD score but a lower meanMD score than Cluster 1. 
+
+```{r message=FALSE, warning=FALSE}
+hc3 <- adhd.red.complete %>%  scale %>% dist(method = "euclidean") %>% hclust(method =  'ward.D')
+dend3 <- hc3 %>% as.dendrogram
+sub_grp3 <- cutree(dend3, k = 3)
+dend3 %>% set("branches_k_color", k = 3) %>% set("labels", "") %>% plot(main = "Hierachical Clustering Reduced Dataset + Ward Linkage")
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  mutate(cluster = sub_grp3) %>%
+  group_by(cluster) %>%
+  summarise(meanAge = mean(Age), meanMD = mean(MDTotal), meanADHD = mean(ADHDTotal), count = n()) %>%
+  gather(var,value,meanAge:count) %>%
+  ggplot(aes(cluster,value,fill=cluster)) + 
+  geom_col() + facet_grid(var ~ ., scales="free_y") +
+  geom_text(aes(label=round(value,1)), vjust=1.6, color="white", size=3.5) + 
+  ggtitle('Reduced Dataset + Ward Linkage Cluster Distribution') +
+  theme_minimal()
+```
+
+### Comparison
+
+We use a tanglegram to obtain side-by-side comparisons on the clusters obtained using the different linkage methods. Here we only compare the complete and average linkage clusterings which are similar in terms of cluster imbalance. The first thing to notice is the consistency of groupings at the higher ends of the hiearchies. This is shown by the nearly horizontal ribbon linking the two clustering and indicates that the selected observations end up in the corresponsing cluster representation. Naturally, a large number of observations find correspondence in the opposing largest clusters. 
+
+```{r message=FALSE, warning=FALSE}
+dl <- dendlist(
+  dend1 %>% 
+    set("labels_col", k=6) %>%
+    set("branches_lty", 1) %>%
+    set("branches_k_color", k = 6),
+  dend2 %>% 
+    set("labels_col", k=5) %>%
+    set("branches_lty", 1) %>%
+    set("branches_k_color", k = 5)
+)
+ 
+# Plot them together
+tanglegram(dl,
+           common_subtrees_color_lines = TRUE, highlight_distinct_edges  = TRUE, highlight_branches_lwd=FALSE,
+           margin_inner=7,
+           lwd=2,
+           show_labels = FALSE
+)
+title("Complete Linkage vs Average")
+```
+
+The comparison of complete linkage against ward linkage is interesting since the latter contains only half the number of clusters. It might be worth studying how the patients in the middle cluster of the ward representation (lowest ADHD and MD) find correspondence in the complete linkage clusters. Similarly, we could study in more detail how individuals in Clusters 3 and 6 (using complete linkage) which were small but extreme clusters end up grouped in the ward representation which had less defined levels of severity in terms of ADHD and MD.
+
+```{r message=FALSE, warning=FALSE}
+dl <- dendlist(
+  dend1 %>% 
+    set("labels_col", k=6) %>%
+    set("branches_lty", 1) %>%
+    set("branches_k_color", k = 6),
+  dend3 %>% 
+    set("labels_col", k=3) %>%
+    set("branches_lty", 1) %>%
+    set("branches_k_color", k = 3)
+)
+ 
+# Plot them together
+tanglegram(dl,
+           common_subtrees_color_lines = TRUE, highlight_distinct_edges  = TRUE, highlight_branches_lwd=FALSE,
+           margin_inner=7,
+           lwd=2,
+           show_labels = FALSE
+)
+title("Complete Linkage vs Ward")
+```
+
+# Principal Component Analysis
+
+Principal Comnponent Analysis (PCA) is a dimensionality reduction technique where a dataset is transformed to use p eigenvectors of the covariance matrix instead of the original number of predictors n, where p < n. The number of eigenvectors p is selected by looking at the sorted eigenvalues and determining a threshold percentage of variance explained and the resulting p.
+
+The method seeks to project the data into a lower dimensional space where each axis (or principal component) captures the most variability in the data subject to the condition of being uncorrelated to the other axes. This last condition is important for dimensionality reduction in the sense that large datasets can contain many correlated variables which hold no additional information.
+
+An eigenvalue > 1 indicates that PCs account for more variance than accounted by one of the original variables in standardized data. This is commonly used as a cutoff point for which PCs are retained. This holds true only when the data are standardized. We can also limit the number of component to that number that accounts for a certain fraction of the total variance, for example 70%.
+
+### ADHD Questionnaire
+
+This section focuses on the subset of the data containing only the individual responses to the ADHD questionnaire. The table below displays the first 10 eigenvalues obtained from the decomposition. Following from the cutoff decription above, our selection of dimensions can be based on the number of scaled eigenvalues that are greater than 1 or on a certain percentage of cummulative variance explained. Another way to select the number of PCs to consider is to study the scree plot provided below, which is simply a visual representation of the variance explained by each component. We typically look for an elbow in the plot to make our selection. In our case, the scree plot elbow occurs at Dimensions = 2 and the eigenvalue threshold at Dimensions = 3 which account for 59.2% and 64.8% respectively. 
+
+```{r message=FALSE, warning=FALSE}
+adhd.full %>% select(ADHD.Q1:ADHD.Q18) %>%
+  prcomp(scale = TRUE) %>% get_eigenvalue() %>% head(10)
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd.full %>% select(ADHD.Q1:ADHD.Q18) %>%
+  prcomp(scale = FALSE) %>% 
+  fviz_eig(addlabels = TRUE)
+```
+
+We can study the individual contributions of each questionnaire response to the principal components using the plot below. We observe that the contributions to the first principal component (Dim. 1) by the variables is roughly equivalent. However, Q16 bears a lot of weight in the 2nd dimension as Q5 does in the third dimension.
+
+```{r message=FALSE, warning=FALSE}
+res.pca.adhd <- adhd.full %>% select(ADHD.Q1:ADHD.Q18) %>% prcomp(scale = FALSE)
+corrplot(get_pca_var(res.pca.adhd)$contrib, is.corr=FALSE)    
+```
+
+The cummulative contribution across the first 3 dimensions is summarized below. Q5 bears the most overall importance, followed by Q16 and Q4. It is worth diving into the actual questionnaire to look up what each question is asking to see if any insights can be drawn to explain the variability. The questions are listed below.
+
+  - Q4: When you have a task that requires a lot of thought, how often do you avoid or delay getting started?
+  - Q5: How often do you fidget or squirm with your hands or feet when you have to sit down for a long time?
+  - Q16: When you’re in a conversation, how often do you find yourself finishing the sentences of the people you are talking to, before they can finish them themselves?
+
+```{r message=FALSE, warning=FALSE}
+adhd.full %>% select(ADHD.Q1:ADHD.Q18) %>%
+  prcomp(scale = FALSE) %>% 
+  fviz_contrib(choice = "var", axes = 1:3, top = 10)
+```
+
+We can visualize these contribution in 2 dimensions using the first two PCs as shown below. On this plot, we look at the groupings and directions of the vectors. Positively correlated variables are grouped together. Negatively correlated variables are positioned on opposite sides of the plot origin. The distance between variables and the origin measures the contribution of the variables. We make the following observations:
+
+  - Q16 is most red and shown as the most contributing variable in this representation due to it's importance in PC2 which we saw above. 
+  - Q15, Q17 and Q18 are closely correlated while being away from the correlated vectors near the PC1 axis.
+  - Most vectors hug the PC1 axis as can be explained from the fairly even contributions to PC1 reveale don the correlation plot.
+  - Q16, A9, Q4 and Q5 have the largest distances from the origin and contribute similarly to PC1 but contribute quite differently to PC2 where Q16 dominates
+
+
+
+```{r message=FALSE, warning=FALSE}
+fviz_pca_var(res.pca.adhd,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+### Reduced Dataset
+
+Using the resduced dataset, we can use PCA to extract additional information about the patients. Since we are using total scores for this section, the variables must be scaled in order to avoid any overweighted contributions. We find that it takes 9 dimensions to explain approximately 70% of the variance. The scree plot has no obvious elbow which can be used to determine a cutoff. Using the eigenvalue cutoff at Dimension 8, we can still capture 66% of the variance.
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  prcomp(scale = TRUE) %>%get_eigenvalue() %>% head(10)
+```
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  prcomp(scale = TRUE) %>% 
+  fviz_eig(addlabels = TRUE)
+```
+
+From the correlation and variable contribution plots below, we can make a few observations:
+
+- SubstDX is the largest contributor to PC1
+- ADHDTotal is the most important contribution to PC2 followed by NonSubstDX
+- Education and Opiods contribute about equally to PC3
+- Emotional abuse, Violence, THC and Alcohol are the greatest contributors to PC4, 5, 6 & 7 respectfully.
+- Race is the leading contributor to PC8 which is our cutoff.
+
+```{r message=FALSE, warning=FALSE}
+res.pca <- adhd.red.complete %>% prcomp(scale = TRUE)
+corrplot(get_pca_var(res.pca)$contrib, is.corr=FALSE)    
+```
+
+Cummulatively for PC1 to PC8, we can observe from the below that Education and its derivative EducationLevel is the largest individual contributor to the principal components, followed by SubstDX, Age and Race. The two ADHD and Mood Disorder questionnaires contribute roughly equivalently to the first 8 dimensions. 
+
+```{r message=FALSE, warning=FALSE}
+adhd.red.complete %>%
+  prcomp(scale = TRUE) %>% 
+  fviz_contrib(choice = "var", axes = 1:8, top = 10)
+```
+
+The 2D representation of the variable contributions to PC1 and PC2 are shown below. We note the following:
+
+  - SubstDX has the largest contribution mostly in the direction of the PC2 axis. In the same direction we can identify lesser but nevertheless present contributions from variables such as Violence, Conduct, Cocaine, THC and Alcohol. 
+  - SubstDX and the aforementioned variables are uncorrelated with the Education variables as shown by the opposite direction of those vectors.
+  - NonSubstDX is correlated with ADHDTotal
+  - The ADHDTotal score is nearly perfectly correlated with Sex and uncorrelated with Race. We might want to be careful with the use of these variables. 
+  - The MDTotal score is closely correlated with Suicide.
+  - The slice of the lower right quadrant between MDTotal and ADHDTotal contains Suicide and all forms of Abuse.
+
+In summary, the most insightful observations from this PCA analysis might be that Suicide and Abuse are generally correlated with both ADHD and Mood Disorder. Additionally, Mood Disorder is more closely correlated with substance-related abuse as well as abuse of Alcohol and THC, Violence and Conduct than ADHD. 
+
+```{r message=FALSE, warning=FALSE}
+fviz_pca_var(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+The biplot representation below displays the same information as above but overlays the individual patient numbers. This view allows the selection of individual observations for a deeper dive.
+
+```{r message=FALSE, warning=FALSE}
+fviz_pca_biplot(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
