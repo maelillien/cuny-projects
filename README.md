@@ -17,6 +17,8 @@ Technologies: R, Python, Jupyter notebooks, Dash, RShiny
 
 #### Machine Learning, Network Analysis, Natural Language Processing
 
+[predicting-diabetes-icu](https://github.com/maelillien/cuny-projects/tree/main/predicting-diabetes-icu) - My CUNY SPS Master's thesis developping a classifier using machine learning techniques capable of accurately predicting diabetes from patient data that is routinely collected in Intensive Care Units (ICUs). Algorithms  explored include Logistic Regression (and regularized variants), Decision Trees, Bagging, Boosting and Random Forests.  
+
 [stock-prediction-methods](https://rpubs.com/maelillien/data621finalproject) - An exploration of various machine learning methods for stock prediction using logistic regression, panel regression and autoregressive models. 
 
 [spam-email-classifier](https://nbviewer.jupyter.org/github/maelillien/cuny-projects/blob/main/spam-email-classifier/data620assignment06.ipynb) - Spam email classification comparing Naive Bayes, SVM, Random Forest and Adaptive Boosting models.
